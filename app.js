@@ -1,16 +1,17 @@
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,createUserWithEmailAndPassword,signInWithPopup,GoogleAuthProvider,signOut,updateProfile} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {getFirestore,doc,setDoc,updateDoc,getDoc,arrayUnion,collection,onSnapshot,query,where,addDoc,deleteDoc} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {initializeFirestore,doc,setDoc,updateDoc,getDoc,arrayUnion,collection,onSnapshot,query,where,orderBy,limitToLast,addDoc,deleteDoc} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {firebaseConfig} from "./firebase-config.js";
 
 const $=s=>document.querySelector(s);
 const E=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
 const fmt=n=>n<1024?n+" B":n<1048576?(n/1024).toFixed(1)+" KB":(n/1048576).toFixed(1)+" MB";
 const uid=()=>Math.random().toString(36).slice(2,10)+Date.now().toString(36);
-const fb=initializeApp(firebaseConfig),auth=getAuth(fb),db=getFirestore(fb);
+const fb=initializeApp(firebaseConfig),auth=getAuth(fb),db=initializeFirestore(fb,{experimentalAutoDetectLongPolling:true});
 let me=null,users={},files=[],folders=["Belum diunduh","Umum"],view="home",selId=null,curF="Semua",sends={},pcs={},asked={},mq=[],busy=false,tt,unsubs=[],hb,mode="in";
 const CH=16384,ICE={iceServers:[{urls:"stun:stun.l.google.com:19302"},{urls:["turn:openrelay.metered.ca:80","turn:openrelay.metered.ca:443","turn:openrelay.metered.ca:443?transport=tcp"],username:"openrelayproject",credential:"openrelayproject"}]};
 const toast=t=>{const e=$("#toast");e.textContent=t;e.classList.add("show");clearTimeout(tt);tt=setTimeout(()=>e.classList.remove("show"),3000)};
+const fail=e=>toast("Database: "+((e&&e.code)||"error")+(e&&e.code==="permission-denied"?" - Publish Rules di Firestore":""));
 const notify=t=>{try{navigator.vibrate&&navigator.vibrate(200);if(window.Notification&&Notification.permission==="granted"&&document.hidden)new Notification(t)}catch(e){}};
 const nm=id=>(users[id]&&users[id].name)||"Pengguna";
 const col=id=>"hsl("+([...id].reduce((a,c)=>a+c.charCodeAt(0),0)*47%360)+",85%,72%)";
@@ -39,21 +40,22 @@ $("#go").onclick=async()=>{
 $("#gg").onclick=()=>signInWithPopup(auth,new GoogleAuthProvider()).catch(err);
 $("#lo").onclick=()=>signOut(auth);
 
-onAuthStateChanged(auth,async u=>{
-  unsubs.forEach(f=>f());unsubs=[];clearInterval(hb);
+let pi;
+onAuthStateChanged(auth,u=>{
+  unsubs.forEach(f=>f());unsubs=[];rUn.forEach(f=>f());rUn=[];clearInterval(hb);clearInterval(pi);
+  $("#boot").hidden=true;
   if(!u){me=null;$("#app").hidden=true;$("#auth").hidden=false;return}
-  me={id:u.uid};$("#auth").hidden=true;$("#app").hidden=false;view="home";
-  const ref=doc(db,"users",u.uid);
-  const base={lastSeen:Date.now()};if(u.displayName)base.name=u.displayName;
-  await setDoc(ref,base,{merge:true});
-  try{const d=(await getDoc(ref)).data();if(d&&d.folders)folders=d.folders}catch(e){}
-  try{files=((await tx("readonly",s=>s.getAll()))||[]).filter(f=>f.owner===me.id)}catch(e){files=[]}
+  me={id:u.uid};$("#auth").hidden=true;$("#app").hidden=false;view="home";renderAll();
+  const ref=doc(db,"users",u.uid),base={lastSeen:Date.now()};if(u.displayName)base.name=u.displayName;
+  setDoc(ref,base,{merge:true}).catch(fail);
+  getDoc(ref).then(d=>{const x=d.data();if(x&&x.folders){folders=x.folders;if(view==="profile")render()}}).catch(()=>{});
+  tx("readonly",s=>s.getAll()).then(r=>{files=(r||[]).filter(f=>f.owner===me.id);if(view==="profile")render()}).catch(()=>{});
   hb=setInterval(()=>updateDoc(ref,{lastSeen:Date.now()}).catch(()=>{}),20000);
-  unsubs.push(onSnapshot(collection(db,"users"),s=>{s.forEach(d=>{const x=d.data(),ls=x.lastSeen||0,q=seen[d.id];users[d.id]=x;if(!q)seen[d.id]={v:ls,t:Date.now()-ls<120000?Date.now():0};else if(q.v!==ls){q.v=ls;q.t=Date.now()}});renderAll()}));
-  unsubs.push(onSnapshot(query(collection(db,"signals"),where("to","==",me.id)),s=>s.docChanges().forEach(c=>{if(c.type==="added"){const x=c.doc.data();deleteDoc(c.doc.ref);try{onSig(x.from,JSON.parse(x.d))}catch(e){}}})));
-  setInterval(renderPeople,15000);listenRooms();const lq=new URLSearchParams(location.search).get("room");if(lq)openRoom(lq);
+  unsubs.push(onSnapshot(collection(db,"users"),s=>{s.forEach(d=>{const x=d.data(),ls=x.lastSeen||0,q=seen[d.id];users[d.id]=x;if(!q)seen[d.id]={v:ls,t:Date.now()-ls<120000?Date.now():0};else if(q.v!==ls){q.v=ls;q.t=Date.now()}});renderAll()},fail));
+  unsubs.push(onSnapshot(query(collection(db,"signals"),where("to","==",me.id)),s=>s.docChanges().forEach(c=>{if(c.type==="added"){const x=c.doc.data();deleteDoc(c.doc.ref).catch(()=>{});if(Date.now()-x.ts>120000)return;try{onSig(x.from,JSON.parse(x.d))}catch(e){}}}),fail));
+  pi=setInterval(renderPeople,15000);listenRooms();
+  const lq=new URLSearchParams(location.search).get("room");if(lq)openRoom(lq);
   try{window.Notification&&Notification.permission==="default"&&Notification.requestPermission()}catch(e){}
-  renderAll();
 });
 
 /* modal */
@@ -163,7 +165,7 @@ function accept(peer,d){
         else if(m.t==="end"&&cur){const c=cur;cur=null;
           const o={id:uid(),owner:me.id,name:c.m.name,size:c.m.size,type:c.m.type,blob:new Blob(c.ch,{type:c.m.type||"application/octet-stream"}),folder:"Belum diunduh",vis:"priv",dl:false,from:nm(peer)};
           await addFile(o);if(view==="profile")render();notify("File diterima: "+o.name);
-          modal("File diterima",[o.name,fmt(o.size)+" dari "+nm(peer)],[{t:"Unduh",c:"g",f:()=>saveOut(o)},{t:"Nanti saja",c:"w"}])}
+          modal("File diterima",[o.name,fmt(o.size)+" dari "+nm(peer),"Sudah tersimpan di profilmu, folder Belum diunduh."],[{t:"Unduh",c:"g",f:()=>saveOut(o)},{t:"Lihat di profil",c:"b",f:()=>{curF="Belum diunduh";view="profile";render()}},{t:"Nanti saja",c:"w"}])}
       }else if(cur)cur.ch.push(ev.data)}};
   sig(peer,{k:"ok",tid:d.tid});
 }
@@ -176,7 +178,7 @@ function onSig(from,d){
     const f=files.find(x=>x.id===d.fid&&x.vis==="pub");if(!f)return sig(from,{k:"no",tid:""});
     notify(nm(from)+" meminta file");
     modal(nm(from)+" meminta file publikmu",[f.name],[{t:"Kirim",c:"g",f:()=>offer(from,[f],d.fid)},{t:"Tolak",c:"p",f:()=>sig(from,{k:"no",tid:""})}]);
-  }else if(d.k==="ok"&&sends[d.tid])startSend(d.tid);
+  }else if(d.k==="ok"&&sends[d.tid]){toast(nm(from)+" setuju. Mengirim...");notify(nm(from)+" menyetujui file");startSend(d.tid)}
   else if(d.k==="no"){toast("Permintaan ditolak.");delete sends[d.tid]}
   else if(d.k==="offer"&&pcs[d.tid]){const P=pcs[d.tid];P.pc.setRemoteDescription(d.sdp).then(async()=>{await flush(P);await P.pc.setLocalDescription(await P.pc.createAnswer());sig(P.peer,{k:"answer",tid:d.tid,sdp:P.pc.localDescription.toJSON()})})}
   else if(d.k==="answer"&&pcs[d.tid]){const P=pcs[d.tid];P.pc.setRemoteDescription(d.sdp).then(()=>flush(P))}
@@ -184,18 +186,18 @@ function onSig(from,d){
 }
 
 /* ===== ROOM ===== */
-let rooms={},curRoom=null,offers={},roomFiles={},served={},rUn=[];
+let rooms={},curRoom=null,offers={},msgs=[],roomFiles={},served={},rUn=[],mInit=false;
+const roomSub=r=>(r.mode==="public"?"Room publik":"Party, hanya lewat link")+" - "+(r.members||[]).length+" anggota";
 function listenRooms(){
   const up=s=>{s.forEach(d=>rooms[d.id]=d.data());renderRooms()};
-  unsubs.push(onSnapshot(query(collection(db,"rooms"),where("mode","==","public")),up,()=>{}));
-  unsubs.push(onSnapshot(query(collection(db,"rooms"),where("members","array-contains",me.id)),up,()=>{}));
+  unsubs.push(onSnapshot(query(collection(db,"rooms"),where("mode","==","public")),up,fail));
+  unsubs.push(onSnapshot(query(collection(db,"rooms"),where("members","array-contains",me.id)),up,fail));
 }
 function renderRooms(){
   const ul=$("#rl");if(!ul||!me)return;ul.replaceChildren();
   const l=Object.entries(rooms).filter(([i,r])=>r.mode==="public"||(r.members||[]).includes(me.id));
   if(!l.length)ul.appendChild(E("li","empty","Belum ada room. Tekan + di atas."));
-  l.forEach(([id,r])=>{const li=E("li","per"),g=E("div","grow");g.appendChild(E("div","n",r.name));
-    g.appendChild(E("div","sm",(r.mode==="public"?"Publik":"Party")+" - "+(r.members||[]).length+" anggota"));li.appendChild(g);
+  l.forEach(([id,r])=>{const li=E("li","per"),g=E("div","grow");g.appendChild(E("div","n",r.name));g.appendChild(E("div","sm",roomSub(r)));li.appendChild(g);
     li.onclick=()=>{closeDr();openRoom(id)};ul.appendChild(li)});
 }
 async function openRoom(id){
@@ -203,15 +205,16 @@ async function openRoom(id){
     const ref=doc(db,"rooms",id),snap=await getDoc(ref);
     if(!snap.exists())return toast("Room tidak ditemukan.");
     if(!(snap.data().members||[]).includes(me.id))await updateDoc(ref,{members:arrayUnion(me.id)});
-    rUn.forEach(f=>f());rUn=[];curRoom=id;offers={};view="room";
-    rUn.push(onSnapshot(ref,d=>{if(d.exists()){rooms[id]=d.data();renderRooms();if(view==="room")render()}}));
-    rUn.push(onSnapshot(collection(db,"rooms",id,"offers"),s=>{
-      offers={};s.forEach(d=>offers[d.id]=d.data());
-      Object.entries(offers).forEach(([oid,o])=>{if(o.from!==me.id)return;const f=roomFiles[oid];
-        Object.keys(o.req||{}).forEach(u=>{if(o.ok&&o.ok[u]&&!served[oid+u]&&f){served[oid+u]=1;offer(u,[{name:f.name,size:f.size,type:f.type,blob:f}],oid)}})});
-      if(view==="room")render()},()=>toast("Tidak bisa membuka room.")));
+    rUn.forEach(f=>f());rUn=[];curRoom=id;offers={};msgs=[];mInit=false;view="room";rooms[id]=snap.data();
+    rUn.push(onSnapshot(ref,d=>{if(d.exists()){rooms[id]=d.data();renderRooms();const e=$("#rsub");if(e&&view==="room")e.textContent=roomSub(d.data())}},fail));
+    rUn.push(onSnapshot(collection(db,"rooms",id,"offers"),s=>{offers={};s.forEach(d=>offers[d.id]=d.data());serve();if(view==="room")fillOffers()},fail));
+    rUn.push(onSnapshot(query(collection(db,"rooms",id,"msgs"),orderBy("ts"),limitToLast(60)),s=>{msgs=s.docs.map(d=>d.data());const l=msgs[msgs.length-1];if(mInit&&l&&l.from!==me.id&&(document.hidden||view!=="room"))notify(nm(l.from)+": "+l.text);mInit=true;if(view==="room")fillChat()},fail));
     render();
-  }catch(e){toast("Gagal membuka room. Cek Rules Firestore.")}
+  }catch(e){fail(e)}
+}
+function serve(){
+  Object.entries(offers).forEach(([oid,o])=>{if(o.from!==me.id)return;const f=roomFiles[oid];
+    Object.keys(o.req||{}).forEach(u=>{const k=oid+u+o.req[u];if(f&&!served[k]){served[k]=1;toast(nm(u)+" setuju. Mengirim "+f.name+"...");notify(nm(u)+" meminta "+f.name);offer(u,[{name:f.name,size:f.size,type:f.type,blob:f}],oid)}})});
 }
 function vNew(m){
   const c=E("div","card");c.appendChild(E("h2","","Buat room"));
@@ -220,28 +223,41 @@ function vNew(m){
   const mk=(k,t)=>{const b=E("button","",t);b.setAttribute("aria-pressed",k===md);b.onclick=()=>{md=k;[...ch.children].forEach((x,i)=>x.setAttribute("aria-pressed",(i===0)===(k==="party")))};ch.appendChild(b)};
   mk("party","Party (hanya lewat link)");mk("public","Room publik");
   const go=E("button","g","Buat room");
-  go.onclick=async()=>{const id=uid()+uid();try{await setDoc(doc(db,"rooms",id),{name:inp.value.trim()||"Room baru",owner:me.id,mode:md,members:[me.id],created:Date.now()});openRoom(id)}catch(e){toast("Gagal membuat room. Cek Rules Firestore.")}};
+  go.onclick=async()=>{const id=uid()+uid();try{await setDoc(doc(db,"rooms",id),{name:inp.value.trim()||"Room baru",owner:me.id,mode:md,members:[me.id],created:Date.now()});openRoom(id)}catch(e){fail(e)}};
   c.append(inp,ch,go);m.appendChild(c);
 }
 function vRoom(m){
   const r=rooms[curRoom]||{},c=E("div","card"),link=location.origin+location.pathname+"?room="+curRoom;
-  c.appendChild(E("h2","",r.name||"Room"));
-  c.appendChild(E("div","sm",(r.mode==="public"?"Room publik":"Party, hanya lewat link")+" - "+(r.members||[]).length+" anggota"));
+  c.appendChild(E("h2","",r.name||"Room"));const sb=E("div","sm",roomSub(r));sb.id="rsub";c.appendChild(sb);
   const row=E("div","row");row.style.marginTop="12px";
   const cp=E("button","b s","Salin link invite");cp.onclick=async()=>{try{await navigator.clipboard.writeText(link);toast("Link disalin.")}catch(e){prompt("Salin link ini:",link)}};
   const sh=E("button","w s","Bagikan");sh.onclick=()=>navigator.share?navigator.share({title:"MiseVerse",text:"Gabung room "+r.name,url:link}).catch(()=>{}):cp.onclick();
   const ad=E("button","g s","Tambah file");ad.onclick=()=>pick(async fs=>{for(const f of fs)await addOffer(f)});
   row.append(cp,sh,ad);c.appendChild(row);m.appendChild(c);
-  const ul=E("ul"),ids=Object.keys(offers);
+  const ul=E("ul");ul.id="ofl";m.appendChild(ul);fillOffers();
+  const cc=E("div","card");cc.appendChild(E("h2","","Chat"));const cl=E("div","chat");cl.id="cl";cc.appendChild(cl);
+  const r2=E("div","row"),ci=E("input");ci.type="text";ci.placeholder="Tulis pesan";ci.maxLength=500;ci.style.flex="1";ci.style.margin="0";ci.style.minWidth="0";
+  const send=()=>{const v=ci.value.trim();if(!v)return;ci.value="";addDoc(collection(db,"rooms",curRoom,"msgs"),{from:me.id,text:v,ts:Date.now()}).catch(fail)};
+  const sb2=E("button","b","Kirim");sb2.onclick=send;ci.onkeydown=e=>{if(e.key==="Enter")send()};
+  r2.append(ci,sb2);cc.appendChild(r2);m.appendChild(cc);fillChat();
+}
+function fillChat(){
+  const l=$("#cl");if(!l)return;l.replaceChildren();
+  if(!msgs.length)l.appendChild(E("div","sm","Belum ada pesan."));
+  msgs.forEach(x=>{const d=E("div","msg"+(x.from===me.id?" me":""));if(x.from!==me.id)d.appendChild(E("b","",nm(x.from)));d.appendChild(E("span","",x.text));l.appendChild(d)});
+  l.scrollTop=l.scrollHeight;
+}
+function fillOffers(){
+  const ul=$("#ofl");if(!ul)return;ul.replaceChildren();const ids=Object.keys(offers);
   if(!ids.length)ul.appendChild(E("li","empty","Belum ada file. Tekan Tambah file untuk menawarkan file."));
-  ids.forEach(oid=>ul.appendChild(offerCard(oid,offers[oid])));m.appendChild(ul);
+  ids.forEach(oid=>ul.appendChild(offerCard(oid,offers[oid])));
 }
 const offRef=oid=>doc(db,"rooms",curRoom,"offers",oid);
 function thumb(f){return new Promise((ok,no)=>{const i=new Image();i.onload=()=>{const s=Math.min(1,160/Math.max(i.width,i.height)),c=document.createElement("canvas");c.width=i.width*s;c.height=i.height*s;c.getContext("2d").drawImage(i,0,0,c.width,c.height);ok(c.toDataURL("image/jpeg",.5))};i.onerror=no;i.src=URL.createObjectURL(f)})}
 async function addOffer(f){
-  const o={from:me.id,name:f.name,size:f.size,type:f.type||"",req:{},ok:{},ts:Date.now()};
+  const o={from:me.id,name:f.name,size:f.size,type:f.type||"",req:{},ts:Date.now()};
   try{if(o.type.startsWith("image/"))o.thumb=await thumb(f);else if(o.type.startsWith("text/")||/\.(txt|md|csv|json|js|html|css)$/i.test(f.name))o.snip=await f.slice(0,400).text()}catch(e){}
-  try{const r=await addDoc(collection(db,"rooms",curRoom,"offers"),o);roomFiles[r.id]=f}catch(e){toast("Gagal menambah file.")}
+  try{const r=await addDoc(collection(db,"rooms",curRoom,"offers"),o);roomFiles[r.id]=f;toast("File ditawarkan di room.")}catch(e){fail(e)}
 }
 function offerCard(oid,o){
   const li=E("li"),mine=o.from===me.id;
@@ -250,13 +266,13 @@ function offerCard(oid,o){
   if(o.snip){const p=E("div","snip nocopy",o.snip);["copy","cut","contextmenu","selectstart","dragstart"].forEach(ev=>p.addEventListener(ev,e=>e.preventDefault()));li.appendChild(p)}
   const bt=E("div","row");bt.style.marginTop="8px";
   if(mine){
-    Object.keys(o.req||{}).forEach(u=>{
-      if(o.ok&&o.ok[u])bt.appendChild(E("span","sm",nm(u)+": disetujui"));
-      else{const g=E("button","g s","Izinkan "+nm(u));g.onclick=()=>updateDoc(offRef(oid),{["ok."+u]:true});bt.appendChild(g)}});
-    if(!Object.keys(o.req||{}).length)bt.appendChild(E("span","sm","Menunggu peminta"));
-    const x=E("button","p s","Hapus");x.onclick=()=>deleteDoc(offRef(oid));bt.appendChild(x);
-  }else if(o.ok&&o.ok[me.id])bt.appendChild(E("span","sm","Disetujui. File sedang dikirim..."));
-  else if(o.req&&o.req[me.id])bt.appendChild(E("span","sm","Menunggu persetujuan pengirim..."));
-  else{const g=E("button","g","Terima");g.onclick=()=>{asked[oid]=true;updateDoc(offRef(oid),{["req."+me.id]:true})};bt.appendChild(g)}
+    const n=Object.keys(o.req||{}).length;bt.appendChild(E("span","sm",n?n+" orang sudah setuju":"Menunggu orang yang setuju"));
+    const x=E("button","p s","Hapus");x.onclick=()=>deleteDoc(offRef(oid)).catch(fail);bt.appendChild(x);
+  }else{
+    const on=isOn(o.from),had=o.req&&o.req[me.id];
+    const g=E("button","g",had?"Setuju (minta lagi)":"Setuju");g.disabled=!on;
+    g.onclick=()=>{asked[oid]=true;updateDoc(offRef(oid),{["req."+me.id]:Date.now()}).catch(fail);toast("Menunggu pengirim mengirim file...")};
+    bt.appendChild(g);if(!on)bt.appendChild(E("span","sm","Pengirim sedang offline"));
+  }
   li.appendChild(bt);return li;
 }
