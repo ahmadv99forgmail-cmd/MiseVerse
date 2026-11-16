@@ -61,3 +61,7 @@ main{padding:20px 16px 70px;max-width:640px;margin:0 auto}
 .msg{max-width:85%;padding:6px 10px;border:3px solid #111;word-break:break-word;justify-self:start;background:#fff}
 .msg.me{justify-self:end;background:var(--g)}
 .msg b{display:block;font-size:12px}
+li.room{position:relative;padding-top:24px}
+.tag{position:absolute;top:-3px;right:-3px;border:3px solid #111;padding:1px 10px;font-size:13px;font-weight:700;color:#111}
+.tag.pub{background:var(--g)}
+.tag.lnk{background:var(--y)}
