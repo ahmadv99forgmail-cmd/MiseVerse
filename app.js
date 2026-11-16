@@ -189,7 +189,7 @@ function onSig(from,d){
 let rooms={},curRoom=null,offers={},msgs=[],roomFiles={},served={},rUn=[],mInit=false;
 const roomSub=r=>(r.mode==="public"?"Room publik":"Party, hanya lewat link")+" - "+(r.members||[]).length+" anggota";
 function listenRooms(){
-  const up=s=>{s.forEach(d=>rooms[d.id]=d.data());renderRooms()};
+  const up=s=>{s.docChanges().forEach(c=>{if(c.type==="removed")delete rooms[c.doc.id];else rooms[c.doc.id]=c.doc.data()});renderRooms()};
   unsubs.push(onSnapshot(query(collection(db,"rooms"),where("mode","==","public")),up,fail));
   unsubs.push(onSnapshot(query(collection(db,"rooms"),where("members","array-contains",me.id)),up,fail));
 }
@@ -206,7 +206,7 @@ async function openRoom(id){
     if(!snap.exists())return toast("Room tidak ditemukan.");
     if(!(snap.data().members||[]).includes(me.id))await updateDoc(ref,{members:arrayUnion(me.id)});
     rUn.forEach(f=>f());rUn=[];curRoom=id;offers={};msgs=[];mInit=false;view="room";rooms[id]=snap.data();
-    rUn.push(onSnapshot(ref,d=>{if(d.exists()){rooms[id]=d.data();renderRooms();const e=$("#rsub");if(e&&view==="room")e.textContent=roomSub(d.data())}},fail));
+    rUn.push(onSnapshot(ref,d=>{if(d.exists()){rooms[id]=d.data();renderRooms();const e=$("#rsub");if(e&&view==="room")e.textContent=roomSub(d.data())}else{delete rooms[id];renderRooms();if(curRoom===id){curRoom=null;rUn.forEach(f=>f());rUn=[];view="home";render();toast("Room sudah diakhiri oleh ketua.")}}},fail));
     rUn.push(onSnapshot(collection(db,"rooms",id,"offers"),s=>{offers={};s.forEach(d=>offers[d.id]=d.data());serve();if(view==="room")fillOffers()},fail));
     rUn.push(onSnapshot(query(collection(db,"rooms",id,"msgs"),orderBy("ts"),limitToLast(60)),s=>{msgs=s.docs.map(d=>d.data());const l=msgs[msgs.length-1];if(mInit&&l&&l.from!==me.id&&(document.hidden||view!=="room"))notify(nm(l.from)+": "+l.text);mInit=true;if(view==="room")fillChat()},fail));
     render();
@@ -228,12 +228,14 @@ function vNew(m){
 }
 function vRoom(m){
   const r=rooms[curRoom]||{},c=E("div","card"),link=location.origin+location.pathname+"?room="+curRoom;
-  c.appendChild(E("h2","",r.name||"Room"));const sb=E("div","sm",roomSub(r));sb.id="rsub";c.appendChild(sb);
+  c.appendChild(E("h2","",r.name||"Room"));const sb=E("div","sm",roomSub(r));sb.id="rsub";c.appendChild(sb);c.appendChild(E("div","sm","Ketua: "+nm(r.owner)));
   const row=E("div","row");row.style.marginTop="12px";
   const cp=E("button","b s","Salin link invite");cp.onclick=async()=>{try{await navigator.clipboard.writeText(link);toast("Link disalin.")}catch(e){prompt("Salin link ini:",link)}};
   const sh=E("button","w s","Bagikan");sh.onclick=()=>navigator.share?navigator.share({title:"MiseVerse",text:"Gabung room "+r.name,url:link}).catch(()=>{}):cp.onclick();
   const ad=E("button","g s","Tambah file");ad.onclick=()=>pick(async fs=>{for(const f of fs)await addOffer(f)});
-  row.append(cp,sh,ad);c.appendChild(row);m.appendChild(c);
+  row.append(cp,sh,ad);
+  if(r.owner===me.id){const en=E("button","p s","Akhiri room");en.onclick=()=>modal("Akhiri room?",["Semua anggota akan dikeluarkan dan room ini tidak bisa dibuka lagi."],[{t:"Akhiri room",c:"p",f:()=>deleteDoc(doc(db,"rooms",curRoom)).catch(fail)},{t:"Batal",c:"w"}]);row.appendChild(en)}
+  c.appendChild(row);m.appendChild(c);
   const ul=E("ul");ul.id="ofl";m.appendChild(ul);fillOffers();
   const cc=E("div","card");cc.appendChild(E("h2","","Chat"));const cl=E("div","chat");cl.id="cl";cc.appendChild(cl);
   const r2=E("div","row"),ci=E("input");ci.type="text";ci.placeholder="Tulis pesan";ci.maxLength=500;ci.style.flex="1";ci.style.margin="0";ci.style.minWidth="0";
@@ -275,4 +277,4 @@ function offerCard(oid,o){
     bt.appendChild(g);if(!on)bt.appendChild(E("span","sm","Pengirim sedang offline"));
   }
   li.appendChild(bt);return li;
-}
+    }
