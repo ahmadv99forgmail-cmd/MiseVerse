@@ -1,0 +1,184 @@
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,createUserWithEmailAndPassword,signInWithPopup,GoogleAuthProvider,signOut,updateProfile} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {getFirestore,doc,setDoc,updateDoc,getDoc,collection,onSnapshot,query,where,addDoc,deleteDoc} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {firebaseConfig} from "./firebase-config.js";
+
+const $=s=>document.querySelector(s);
+const E=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
+const fmt=n=>n<1024?n+" B":n<1048576?(n/1024).toFixed(1)+" KB":(n/1048576).toFixed(1)+" MB";
+const uid=()=>Math.random().toString(36).slice(2,10)+Date.now().toString(36);
+const fb=initializeApp(firebaseConfig),auth=getAuth(fb),db=getFirestore(fb);
+let me=null,users={},files=[],folders=["Belum diunduh","Umum"],view="home",selId=null,curF="Semua",sends={},pcs={},asked={},mq=[],busy=false,tt,unsubs=[],hb,mode="in";
+const CH=16384,ICE={iceServers:[{urls:"stun:stun.l.google.com:19302"}]};
+const toast=t=>{const e=$("#toast");e.textContent=t;e.classList.add("show");clearTimeout(tt);tt=setTimeout(()=>e.classList.remove("show"),3000)};
+const notify=t=>{try{navigator.vibrate&&navigator.vibrate(200);if(window.Notification&&Notification.permission==="granted"&&document.hidden)new Notification(t)}catch(e){}};
+const nm=id=>(users[id]&&users[id].name)||"Pengguna";
+const col=id=>"hsl("+([...id].reduce((a,c)=>a+c.charCodeAt(0),0)*47%360)+",85%,72%)";
+const avatar=id=>{const a=E("div","av",nm(id).charAt(0).toUpperCase());a.style.background=col(id);return a};
+const isOn=u=>u&&Date.now()-(u.lastSeen||0)<45000;
+
+/* penyimpanan di HP (IndexedDB) */
+const idb=new Promise((ok,no)=>{const r=indexedDB.open("tukar",1);r.onupgradeneeded=()=>r.result.createObjectStore("f",{keyPath:"id"});r.onsuccess=()=>ok(r.result);r.onerror=no});
+const tx=async(m,fn)=>{const d=await idb;return new Promise((ok,no)=>{const t=d.transaction("f",m),q=fn(t.objectStore("f"));t.oncomplete=()=>ok(q&&q.result);t.onerror=no})};
+const put=o=>tx("readwrite",s=>s.put(o)).catch(()=>toast("Penyimpanan HP penuh."));
+try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
+
+/* login */
+const setMode=m=>{mode=m;$("#ti").setAttribute("aria-pressed",m==="in");$("#tu").setAttribute("aria-pressed",m==="up");$("#go").textContent=m==="in"?"Masuk":"Daftar";$("#ae").textContent=""};
+$("#ti").onclick=()=>setMode("in");$("#tu").onclick=()=>setMode("up");
+const em=n=>n.trim().toLowerCase().replace(/[^a-z0-9._-]/g,"")+"@tukar.app";
+function err(e){const c=e.code||"";$("#ae").textContent=/invalid|wrong|not-found/.test(c)?"Nama atau password salah.":c.includes("email-already")?"Nama sudah dipakai.":c.includes("weak")?"Password minimal 6 karakter.":c.includes("popup")?"Login Google dibatalkan.":c.includes("unauthorized")?"Domain belum didaftarkan di Firebase.":"Gagal masuk. Coba lagi."}
+$("#go").onclick=async()=>{
+  const n=$("#un").value.trim(),p=$("#pw").value;$("#ae").textContent="";
+  if(n.length<3)return $("#ae").textContent="Nama minimal 3 huruf.";
+  try{
+    if(mode==="up"){const c=await createUserWithEmailAndPassword(auth,em(n),p);await updateProfile(c.user,{displayName:n});await setDoc(doc(db,"users",c.user.uid),{name:n,lastSeen:Date.now()},{merge:true})}
+    else await signInWithEmailAndPassword(auth,em(n),p);
+  }catch(e){err(e)}
+};
+$("#gg").onclick=()=>signInWithPopup(auth,new GoogleAuthProvider()).catch(err);
+$("#lo").onclick=()=>signOut(auth);
+
+onAuthStateChanged(auth,async u=>{
+  unsubs.forEach(f=>f());unsubs=[];clearInterval(hb);
+  if(!u){me=null;$("#app").hidden=true;$("#auth").hidden=false;return}
+  me={id:u.uid};$("#auth").hidden=true;$("#app").hidden=false;view="home";
+  const ref=doc(db,"users",u.uid);
+  const base={lastSeen:Date.now()};if(u.displayName)base.name=u.displayName;
+  await setDoc(ref,base,{merge:true});
+  try{const d=(await getDoc(ref)).data();if(d&&d.folders)folders=d.folders}catch(e){}
+  try{files=((await tx("readonly",s=>s.getAll()))||[]).filter(f=>f.owner===me.id)}catch(e){files=[]}
+  hb=setInterval(()=>updateDoc(ref,{lastSeen:Date.now()}).catch(()=>{}),20000);
+  unsubs.push(onSnapshot(collection(db,"users"),s=>{users={};s.forEach(d=>users[d.id]=d.data());renderAll()}));
+  unsubs.push(onSnapshot(query(collection(db,"signals"),where("to","==",me.id)),s=>s.docChanges().forEach(c=>{if(c.type==="added"){const x=c.doc.data();deleteDoc(c.doc.ref);try{onSig(x.from,JSON.parse(x.d))}catch(e){}}})));
+  setInterval(renderPeople,15000);
+  try{window.Notification&&Notification.permission==="default"&&Notification.requestPermission()}catch(e){}
+  renderAll();
+});
+
+/* modal */
+function modal(t,body,btns){mq.push({t,body,btns});if(!busy)nextModal()}
+function nextModal(){
+  const m=mq.shift();if(!m){busy=false;$("#md").classList.remove("open");return}
+  busy=true;$("#mt").textContent=m.t;const b=$("#mb");b.replaceChildren();
+  (Array.isArray(m.body)?m.body:[m.body]).forEach(x=>b.appendChild(E("div","n",x)));
+  const x=$("#mx");x.replaceChildren();
+  m.btns.forEach(o=>{const k=E("button",o.c||"",o.t);k.onclick=async()=>{$("#md").classList.remove("open");try{await (o.f&&o.f())}catch(e){}nextModal()};x.appendChild(k)});
+  $("#md").classList.add("open");
+}
+
+/* menu + orang */
+const openDr=()=>{$("#side").classList.add("open");$("#ov").classList.add("open")},closeDr=()=>{$("#side").classList.remove("open");$("#ov").classList.remove("open")};
+$("#mn").onclick=openDr;$("#ov").onclick=closeDr;$("#mp").onclick=()=>{view="profile";closeDr();render()};
+function renderAll(){renderMe();renderPeople();render()}
+function renderMe(){const b=$("#meb");b.replaceChildren(avatar(me.id));const g=E("div","grow");g.appendChild(E("div","n",nm(me.id)));g.appendChild(E("div","sm","Online"));b.appendChild(g)}
+function renderPeople(){
+  if(!me)return;
+  const ps=Object.keys(users).filter(i=>i!==me.id).map(i=>({id:i,online:isOn(users[i])})).sort((a,b)=>b.online-a.online);
+  const ul=$("#pl");ul.replaceChildren();
+  if(!ps.length)ul.appendChild(E("li","empty","Belum ada orang lain."));
+  ps.forEach(p=>{const li=E("li","per");li.appendChild(avatar(p.id));
+    const g=E("div","grow");g.appendChild(E("div","n",nm(p.id)));g.appendChild(E("div","sm",(p.online?"Online":"Offline")+" - "+((users[p.id].pub||[]).length)+" file publik"));
+    li.appendChild(g);li.appendChild(E("span","dot"+(p.online?" on":"")));
+    li.onclick=()=>{selId=p.id;view="person";closeDr();render()};ul.appendChild(li)});
+}
+
+/* tampilan utama */
+function render(){
+  const m=$("#main");m.replaceChildren();
+  if(view==="home"){const h=E("h1");h.innerHTML="<span>Mise</span><br>Verse";m.appendChild(h);
+    m.appendChild(E("p","","Pilih orang yang sedang online, lalu kirim file. Penerima harus setuju dulu sebelum file masuk."));
+    const b=E("button","p","Lihat orang");b.onclick=openDr;m.appendChild(b)}
+  else if(view==="person")vPerson(m);else vProfile(m);
+}
+function vPerson(m){
+  const id=selId,on=isOn(users[id]),c=E("div","card"),r=E("div","row");r.appendChild(avatar(id));
+  const g=E("div","grow");g.appendChild(E("div","n",nm(id)));g.appendChild(E("div","sm",on?"Online":"Offline"));r.appendChild(g);c.appendChild(r);
+  const s=E("button","b","Kirim file");s.style.marginTop="14px";s.disabled=!on;
+  s.onclick=()=>pick(fs=>offer(id,fs.map(f=>({name:f.name,size:f.size,type:f.type,blob:f}))));c.appendChild(s);
+  if(!on)c.appendChild(E("p","sm","Sedang offline. Kirim file saat dia online."));m.appendChild(c);
+  const c2=E("div","card");c2.appendChild(E("h2","","File publik"));const ul=E("ul"),l=(users[id]&&users[id].pub)||[];
+  if(!l.length)ul.appendChild(E("li","empty","Belum ada file publik."));
+  l.forEach(f=>{const li=E("li","row"),g=E("div","grow");g.appendChild(E("div","n",f.name));g.appendChild(E("div","sm",fmt(f.size)));li.appendChild(g);
+    const k=E("button","g s","Minta");k.disabled=!on;k.onclick=()=>{asked[f.id]=true;sig(id,{k:"ask",fid:f.id});toast("Permintaan dikirim")};li.appendChild(k);ul.appendChild(li)});
+  c2.appendChild(ul);m.appendChild(c2);
+}
+function vProfile(m){
+  const c=E("div","card"),r=E("div","row");r.appendChild(avatar(me.id));
+  const g=E("div","grow");g.appendChild(E("div","n",nm(me.id)));g.appendChild(E("div","sm",files.length+" file di profil"));r.appendChild(g);c.appendChild(r);
+  const a=E("button","b","Tambah file ke profil");a.style.marginTop="14px";
+  a.onclick=()=>pick(async fs=>{for(const f of fs)await addFile({id:uid(),owner:me.id,name:f.name,size:f.size,type:f.type,blob:f,folder:"Umum",vis:"priv",dl:false});render()});
+  c.appendChild(a);m.appendChild(c);
+  const c2=E("div","card");c2.appendChild(E("h2","","Folder"));const ch=E("div","chips");
+  ["Semua",...folders].forEach(f=>{const k=E("button","",f);k.setAttribute("aria-pressed",f===curF);k.onclick=()=>{curF=f;render()};ch.appendChild(k)});c2.appendChild(ch);
+  const inp=E("input");inp.type="text";inp.placeholder="Nama folder baru";inp.maxLength=30;
+  const ad=E("button","s","Tambah folder");ad.onclick=()=>{const v=inp.value.trim();if(v&&!folders.includes(v)){folders.push(v);updateDoc(doc(db,"users",me.id),{folders}).catch(()=>{});render()}};
+  c2.append(inp,ad);
+  const ul=E("ul"),list=files.filter(f=>curF==="Semua"||f.folder===curF);
+  if(!list.length)ul.appendChild(E("li","empty","Folder ini kosong."));
+  list.forEach(f=>{const li=E("li");li.appendChild(E("div","n",f.name));
+    li.appendChild(E("div","sm",fmt(f.size)+(f.from?" - dari "+f.from:"")+(f.dl?" - sudah diunduh":"")));
+    const bt=E("div","row");bt.style.marginTop="8px";
+    const v=E("button",(f.vis==="pub"?"g":"w")+" s",f.vis==="pub"?"Publik":"Privat");v.onclick=async()=>{f.vis=f.vis==="pub"?"priv":"pub";await put(f);syncPub();render()};
+    const sel=E("select");sel.style.width="auto";folders.forEach(o=>{const op=E("option","",o);op.value=o;if(o===f.folder)op.selected=true;sel.appendChild(op)});
+    sel.onchange=async()=>{f.folder=sel.value;await put(f);render()};
+    const d=E("button","b s","Unduh");d.onclick=()=>saveOut(f);
+    const x=E("button","p s","Hapus");x.onclick=async()=>{await tx("readwrite",s=>s.delete(f.id)).catch(()=>{});files=files.filter(z=>z!==f);syncPub();render()};
+    bt.append(v,sel,d,x);li.appendChild(bt);ul.appendChild(li)});
+  c2.appendChild(ul);m.appendChild(c2);
+}
+function pick(cb){const i=$("#pk");i.onchange=()=>{const f=[...i.files];i.value="";if(f.length)cb(f)};i.click()}
+async function addFile(o){files.push(o);await put(o);syncPub()}
+const syncPub=()=>updateDoc(doc(db,"users",me.id),{pub:files.filter(f=>f.vis==="pub").map(f=>({id:f.id,name:f.name,size:f.size}))}).catch(()=>{});
+async function saveOut(f){const a=document.createElement("a");a.href=URL.createObjectURL(f.blob);a.download=f.name;document.body.appendChild(a);a.click();a.remove();f.dl=true;await put(f);render()}
+
+/* sinyal WebRTC lewat Firestore + transfer */
+const sig=(to,o)=>addDoc(collection(db,"signals"),{from:me.id,to,d:JSON.stringify(o),ts:Date.now()}).catch(()=>toast("Gagal mengirim sinyal."));
+function newPC(tid,peer){const pc=new RTCPeerConnection(ICE),P={pc,peer,q:[],rd:false};pcs[tid]=P;pc.onicecandidate=e=>{if(e.candidate)sig(peer,{k:"ice",tid,c:e.candidate.toJSON()})};return P}
+async function flush(P){P.rd=true;for(const c of P.q)try{await P.pc.addIceCandidate(c)}catch(e){}P.q=[]}
+function offer(peer,list,ask){const tid=uid();sends[tid]={peer,list};sig(peer,{k:"req",tid,ask,files:list.map(f=>({name:f.name,size:f.size}))});toast("Menunggu "+nm(peer)+" menyetujui...")}
+async function startSend(tid){
+  const S=sends[tid],P=newPC(tid,S.peer),dc=P.pc.createDataChannel("f");dc.binaryType="arraybuffer";dc.bufferedAmountLowThreshold=1<<20;
+  dc.onopen=()=>pump(dc,S.list);
+  await P.pc.setLocalDescription(await P.pc.createOffer());sig(S.peer,{k:"offer",tid,sdp:P.pc.localDescription.toJSON()});
+}
+const low=dc=>new Promise(r=>{dc.onbufferedamountlow=()=>{dc.onbufferedamountlow=null;r()}});
+async function pump(dc,list){
+  try{for(const it of list){
+    dc.send(JSON.stringify({t:"meta",name:it.name,size:it.size,type:it.type}));
+    for(let o=0;o<it.size;o+=CH){const buf=await it.blob.slice(o,o+CH).arrayBuffer();
+      while(dc.bufferedAmount>4194304){if(dc.readyState!=="open")throw 0;await low(dc)}
+      dc.send(buf);if(o%(CH*64)===0)toast("Mengirim "+it.name+" "+Math.min(100,Math.round(o/it.size*100))+"%")}
+    dc.send(JSON.stringify({t:"end"}))}
+    while(dc.bufferedAmount>0)await new Promise(r=>setTimeout(r,100));
+    toast("Semua file terkirim.");setTimeout(()=>dc.close(),800);
+  }catch(e){toast("Pengiriman terhenti. Cek koneksi.")}
+}
+function accept(peer,d){
+  const P=newPC(d.tid,peer);let cur=null;
+  P.pc.ondatachannel=e=>{const ch=e.channel;ch.binaryType="arraybuffer";
+    ch.onmessage=async ev=>{
+      if(typeof ev.data==="string"){const m=JSON.parse(ev.data);
+        if(m.t==="meta"){cur={m,ch:[]};toast("Menerima "+m.name+"...")}
+        else if(m.t==="end"&&cur){const c=cur;cur=null;
+          const o={id:uid(),owner:me.id,name:c.m.name,size:c.m.size,type:c.m.type,blob:new Blob(c.ch,{type:c.m.type||"application/octet-stream"}),folder:"Belum diunduh",vis:"priv",dl:false,from:nm(peer)};
+          await addFile(o);if(view==="profile")render();notify("File diterima: "+o.name);
+          modal("File diterima",[o.name,fmt(o.size)+" dari "+nm(peer)],[{t:"Unduh",c:"g",f:()=>saveOut(o)},{t:"Nanti saja",c:"w"}])}
+      }else if(cur)cur.ch.push(ev.data)}};
+  sig(peer,{k:"ok",tid:d.tid});
+}
+function onSig(from,d){
+  if(d.k==="req"){
+    if(d.ask&&asked[d.ask]){delete asked[d.ask];return accept(from,d)}
+    notify(nm(from)+" ingin mengirim file");
+    modal(nm(from)+" ingin mengirim file",d.files.map(f=>f.name+" ("+fmt(f.size)+")"),[{t:"Terima",c:"g",f:()=>accept(from,d)},{t:"Tolak",c:"p",f:()=>sig(from,{k:"no",tid:d.tid})}]);
+  }else if(d.k==="ask"){
+    const f=files.find(x=>x.id===d.fid&&x.vis==="pub");if(!f)return sig(from,{k:"no",tid:""});
+    notify(nm(from)+" meminta file");
+    modal(nm(from)+" meminta file publikmu",[f.name],[{t:"Kirim",c:"g",f:()=>offer(from,[f],d.fid)},{t:"Tolak",c:"p",f:()=>sig(from,{k:"no",tid:""})}]);
+  }else if(d.k==="ok"&&sends[d.tid])startSend(d.tid);
+  else if(d.k==="no"){toast("Permintaan ditolak.");delete sends[d.tid]}
+  else if(d.k==="offer"&&pcs[d.tid]){const P=pcs[d.tid];P.pc.setRemoteDescription(d.sdp).then(async()=>{await flush(P);await P.pc.setLocalDescription(await P.pc.createAnswer());sig(P.peer,{k:"answer",tid:d.tid,sdp:P.pc.localDescription.toJSON()})})}
+  else if(d.k==="answer"&&pcs[d.tid]){const P=pcs[d.tid];P.pc.setRemoteDescription(d.sdp).then(()=>flush(P))}
+  else if(d.k==="ice"&&pcs[d.tid]){const P=pcs[d.tid];if(P.rd)P.pc.addIceCandidate(d.c).catch(()=>{});else P.q.push(d.c)}
+}

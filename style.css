@@ -1,0 +1,55 @@
+:root{--bg:#fff;--ink:#111;--mut:#f1f1f1;--y:#FFE14D;--p:#FF7AB6;--g:#5CF2A3;--b:#7AB8FF;color-scheme:light}
+*{box-sizing:border-box}
+html,body{background:#fff;color:#111}
+body{margin:0;font:500 16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+[hidden]{display:none!important}
+.wrap{max-width:440px;margin:0 auto;padding:24px 16px}
+h1{font-size:clamp(46px,14vw,72px);line-height:.92;margin:8px 0 22px;letter-spacing:-.03em}
+h1 span{display:inline-block;background:var(--y);border:3px solid #111;box-shadow:6px 6px 0 #111;padding:2px 10px;transform:rotate(-2deg)}
+h2{font-size:21px;margin:0 0 10px}
+button{font:inherit;font-weight:700;color:#111;background:var(--y);border:3px solid #111;box-shadow:4px 4px 0 #111;padding:9px 14px;cursor:pointer;min-height:44px}
+button:active{transform:translate(4px,4px);box-shadow:none}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--b);outline-offset:3px}
+button.b{background:var(--b)}button.p{background:var(--p)}button.g{background:var(--g)}button.w{background:#fff}
+button.s{min-height:36px;padding:4px 10px;box-shadow:3px 3px 0 #111}
+button.full{width:100%}
+.card{background:#fff;border:3px solid #111;box-shadow:6px 6px 0 #111;padding:16px;margin-bottom:22px}
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.tabs button[aria-pressed=true],.chips button[aria-pressed=true]{background:var(--g)}
+.tabs button[aria-pressed=false],.chips button[aria-pressed=false]{background:#fff}
+label{font-weight:700;display:block;margin-top:8px}
+input[type=text],input[type=password],select{font:inherit;color:#111;background:#fff;border:3px solid #111;padding:8px;min-height:44px;width:100%;max-width:100%;margin:4px 0 8px}
+.err{color:#c00018;font-weight:700;min-height:22px;margin-bottom:6px}
+.or{text-align:center;margin:12px 0;opacity:.7}
+header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:3px solid #111;position:sticky;top:0;background:#fff;z-index:5}
+header b{font-size:22px;flex:1}
+.dot{width:12px;height:12px;border:2px solid #111;border-radius:50%;background:var(--mut);display:inline-block;flex:none}
+.dot.on{background:var(--g)}
+.av{width:44px;height:44px;border:3px solid #111;border-radius:50%;display:grid;place-items:center;font-weight:700;flex:none}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.grow{flex:1;min-width:0}
+.n{font-weight:700;word-break:break-all}.sm{font-size:14px;opacity:.75}
+ul{list-style:none;margin:10px 0;padding:0;display:grid;gap:10px}
+li{border:3px solid #111;padding:10px;background:#fff}
+li.per{cursor:pointer;display:flex;align-items:center;gap:10px}
+li.per:active{background:var(--mut)}
+.empty{border:3px dashed #111;padding:14px;text-align:center;opacity:.8}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.chips button{min-height:36px;padding:4px 12px;box-shadow:3px 3px 0 #111}
+main{padding:20px 16px 70px;max-width:640px;margin:0 auto}
+#side{position:fixed;top:0;bottom:0;left:0;width:min(330px,88vw);background:#fff;border-right:3px solid #111;padding:calc(16px + env(safe-area-inset-top,0)) 16px 16px;overflow:auto;transform:translateX(-102%);z-index:20}
+#side.open{transform:none}
+#ov{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:15;display:none}
+#ov.open{display:block}
+#md{position:fixed;inset:0;z-index:30;display:none;place-items:center;background:rgba(0,0,0,.55);padding:16px}
+#md.open{display:grid}
+#md .box{background:#fff;border:3px solid #111;box-shadow:8px 8px 0 var(--p);padding:18px;width:min(420px,100%)}
+#toast{position:fixed;left:16px;right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0));max-width:568px;margin:0 auto;background:#111;color:#fff;border:3px solid #111;padding:12px 14px;font-weight:700;box-shadow:4px 4px 0 var(--p);opacity:0;pointer-events:none;z-index:40}
+#toast.show{opacity:1}
+/* tampilan PC */
+@media (min-width:900px){
+ #mn,#ov{display:none!important}
+ .lay{display:grid;grid-template-columns:340px 1fr;min-height:calc(100vh - 66px)}
+ #side{position:static;transform:none;width:auto;z-index:1;padding:20px}
+ main{padding:32px 40px;max-width:760px;margin:0}
+}
