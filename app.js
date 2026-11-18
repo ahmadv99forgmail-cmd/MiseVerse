@@ -15,7 +15,8 @@ const fail=e=>toast("Database: "+((e&&e.code)||"error")+(e&&e.code==="permission
 const notify=t=>{try{navigator.vibrate&&navigator.vibrate(200);if(window.Notification&&Notification.permission==="granted"&&document.hidden)new Notification(t)}catch(e){}};
 const nm=id=>(users[id]&&users[id].name)||"Pengguna";
 const col=id=>"hsl("+([...id].reduce((a,c)=>a+c.charCodeAt(0),0)*47%360)+",85%,72%)";
-const avatar=id=>{const a=E("div","av",nm(id).charAt(0).toUpperCase());a.style.background=col(id);return a};
+const avatar=id=>{const u=users[id]||{},a=E("div","av",u.photo?"":nm(id).charAt(0).toUpperCase());a.style.background=u.photo?'url("'+u.photo+'") center/cover':col(id);return a};
+const sq=f=>new Promise((ok,no)=>{const i=new Image();i.onload=()=>{const s=Math.min(i.width,i.height),c=document.createElement("canvas");c.width=c.height=128;c.getContext("2d").drawImage(i,(i.width-s)/2,(i.height-s)/2,s,s,0,0,128,128);ok(c.toDataURL("image/jpeg",.7))};i.onerror=no;i.src=URL.createObjectURL(f)});
 const seen={};const isOn=id=>Date.now()-(seen[id]?seen[id].t:0)<50000;
 
 /* penyimpanan di HP (IndexedDB) */
@@ -46,9 +47,8 @@ onAuthStateChanged(auth,u=>{
   $("#boot").hidden=true;
   if(!u){me=null;$("#app").hidden=true;$("#auth").hidden=false;return}
   me={id:u.uid};$("#auth").hidden=true;$("#app").hidden=false;view="home";renderAll();
-  const ref=doc(db,"users",u.uid),base={lastSeen:Date.now()};if(u.displayName)base.name=u.displayName;
-  setDoc(ref,base,{merge:true}).catch(fail);
-  getDoc(ref).then(d=>{const x=d.data();if(x&&x.folders){folders=x.folders;if(view==="profile")render()}}).catch(()=>{});
+  const ref=doc(db,"users",u.uid);
+  getDoc(ref).then(d=>{const x=d.data()||{};if(x.folders){folders=x.folders;if(view==="profile")render()}const b={lastSeen:Date.now()};if(!x.name&&u.displayName)b.name=u.displayName;return setDoc(ref,b,{merge:true})}).catch(fail);
   tx("readonly",s=>s.getAll()).then(r=>{files=(r||[]).filter(f=>f.owner===me.id);if(view==="profile")render()}).catch(()=>{});
   hb=setInterval(()=>updateDoc(ref,{lastSeen:Date.now()}).catch(()=>{}),20000);
   unsubs.push(onSnapshot(collection(db,"users"),s=>{s.forEach(d=>{const x=d.data(),ls=x.lastSeen||0,q=seen[d.id];users[d.id]=x;if(!q)seen[d.id]={v:ls,t:Date.now()-ls<120000?Date.now():0};else if(q.v!==ls){q.v=ls;q.t=Date.now()}});renderAll()},fail));
@@ -93,11 +93,11 @@ function render(){
     const b=E("button","p","Lihat orang");b.onclick=openDr;m.appendChild(b);
     const rc=E("div","card");rc.style.marginTop="24px";rc.appendChild(E("h2","","Room"));const hl=E("ul");hl.id="hl";rc.appendChild(hl);
     rc.appendChild(E("div","sm","Room Publik bisa dimasuki siapa saja. Room Link hanya bisa dimasuki lewat link invite dari ketua."));m.appendChild(rc);renderRooms()}
-  else if(view==="person")vPerson(m);else if(view==="room")vRoom(m);else if(view==="newroom")vNew(m);else vProfile(m);
+  else if(view==="person")vPerson(m);else if(view==="room")vRoom(m);else if(view==="newroom")vNew(m);else if(view==="editprofile")vEdit(m);else vProfile(m);
 }
 function vPerson(m){
   const id=selId,on=isOn(id),c=E("div","card"),r=E("div","row");r.appendChild(avatar(id));
-  const g=E("div","grow");g.appendChild(E("div","n",nm(id)));g.appendChild(E("div","sm",on?"Online":"Offline"));r.appendChild(g);c.appendChild(r);
+  const g=E("div","grow");g.appendChild(E("div","n",nm(id)));g.appendChild(E("div","sm",on?"Online":"Offline"));if(users[id]&&users[id].bio)g.appendChild(E("div","",users[id].bio));r.appendChild(g);c.appendChild(r);
   const s=E("button","b","Kirim file");s.style.marginTop="14px";s.disabled=!on;
   s.onclick=()=>pick(fs=>offer(id,fs.map(f=>({name:f.name,size:f.size,type:f.type,blob:f}))));c.appendChild(s);
   if(!on)c.appendChild(E("p","sm","Sedang offline. Kirim file saat dia online."));m.appendChild(c);
@@ -109,10 +109,11 @@ function vPerson(m){
 }
 function vProfile(m){
   const c=E("div","card"),r=E("div","row");r.appendChild(avatar(me.id));
-  const g=E("div","grow");g.appendChild(E("div","n",nm(me.id)));g.appendChild(E("div","sm",files.length+" file di profil"));r.appendChild(g);c.appendChild(r);
+  const g=E("div","grow");g.appendChild(E("div","n",nm(me.id)));g.appendChild(E("div","sm",files.length+" file di profil"));if(users[me.id]&&users[me.id].bio)g.appendChild(E("div","",users[me.id].bio));r.appendChild(g);c.appendChild(r);
   const a=E("button","b","Tambah file ke profil");a.style.marginTop="14px";
   a.onclick=()=>pick(async fs=>{for(const f of fs)await addFile({id:uid(),owner:me.id,name:f.name,size:f.size,type:f.type,blob:f,folder:"Umum",vis:"priv",dl:false});render()});
-  c.appendChild(a);m.appendChild(c);
+  const ed=E("button","w","Edit profil");ed.onclick=()=>{view="editprofile";render()};
+  const br=E("div","row");br.style.marginTop="14px";a.style.marginTop="0";br.append(a,ed);c.appendChild(br);m.appendChild(c);
   const c2=E("div","card");c2.appendChild(E("h2","","Folder"));const ch=E("div","chips");
   ["Semua",...folders].forEach(f=>{const k=E("button","",f);k.setAttribute("aria-pressed",f===curF);k.onclick=()=>{curF=f;render()};ch.appendChild(k)});c2.appendChild(ch);
   const inp=E("input");inp.type="text";inp.placeholder="Nama folder baru";inp.maxLength=30;
@@ -130,6 +131,21 @@ function vProfile(m){
     const x=E("button","p s","Hapus");x.onclick=async()=>{await tx("readwrite",s=>s.delete(f.id)).catch(()=>{});files=files.filter(z=>z!==f);syncPub();render()};
     bt.append(v,sel,d,x);li.appendChild(bt);ul.appendChild(li)});
   c2.appendChild(ul);m.appendChild(c2);
+}
+function vEdit(m){
+  const u=users[me.id]||{};let photo=u.photo||"";
+  const c=E("div","card");c.appendChild(E("h2","","Edit profil"));
+  const pv=E("div","row"),av=E("div","av big");
+  const paint=()=>{av.textContent=photo?"":nm(me.id).charAt(0).toUpperCase();av.style.background=photo?'url("'+photo+'") center/cover':col(me.id)};paint();
+  const ph=E("button","b s","Ganti foto");ph.onclick=()=>{const i=document.createElement("input");i.type="file";i.accept="image/*";i.onchange=async()=>{if(i.files[0])try{photo=await sq(i.files[0]);paint()}catch(e){toast("Foto tidak bisa dibaca.")}};i.click()};
+  const rm=E("button","w s","Hapus foto");rm.onclick=()=>{photo="";paint()};
+  pv.append(av,ph,rm);c.appendChild(pv);
+  c.appendChild(E("label","","Display name"));const ni=E("input");ni.type="text";ni.maxLength=24;ni.value=u.name||"";c.appendChild(ni);
+  c.appendChild(E("label","","Bio"));const bi=E("textarea");bi.maxLength=160;bi.rows=4;bi.value=u.bio||"";bi.placeholder="Ceritakan sedikit tentang kamu";c.appendChild(bi);
+  const row=E("div","row");
+  const sv=E("button","g","Simpan");sv.onclick=()=>{const n=ni.value.trim();if(n.length<2)return toast("Display name minimal 2 huruf.");updateDoc(doc(db,"users",me.id),{name:n,bio:bi.value.trim(),photo}).then(()=>{toast("Profil disimpan.");view="profile";render()}).catch(fail)};
+  const cn=E("button","w","Batal");cn.onclick=()=>{view="profile";render()};
+  row.append(sv,cn);c.appendChild(row);m.appendChild(c);
 }
 function pick(cb){const i=$("#pk");i.onchange=()=>{const f=[...i.files];i.value="";if(f.length)cb(f)};i.click()}
 async function addFile(o){files.push(o);await put(o);syncPub()}
@@ -281,4 +297,4 @@ function offerCard(oid,o){
     bt.appendChild(g);if(!on)bt.appendChild(E("span","sm","Pengirim sedang offline"));
   }
   li.appendChild(bt);return li;
-                                                                                                                                                   }
+                                          }
