@@ -90,7 +90,9 @@ function render(){
   const m=$("#main");m.replaceChildren();
   if(view==="home"){const h=E("h1");h.innerHTML="<span>Mise</span><br>Verse";m.appendChild(h);
     m.appendChild(E("p","","Pilih orang yang sedang online, lalu kirim file. Penerima harus setuju dulu sebelum file masuk."));
-    const b=E("button","p","Lihat orang");b.onclick=openDr;m.appendChild(b)}
+    const b=E("button","p","Lihat orang");b.onclick=openDr;m.appendChild(b);
+    const rc=E("div","card");rc.style.marginTop="24px";rc.appendChild(E("h2","","Room"));const hl=E("ul");hl.id="hl";rc.appendChild(hl);
+    rc.appendChild(E("div","sm","Room Publik bisa dimasuki siapa saja. Room Link hanya bisa dimasuki lewat link invite dari ketua."));m.appendChild(rc);renderRooms()}
   else if(view==="person")vPerson(m);else if(view==="room")vRoom(m);else if(view==="newroom")vNew(m);else vProfile(m);
 }
 function vPerson(m){
@@ -194,11 +196,13 @@ function listenRooms(){
   unsubs.push(onSnapshot(query(collection(db,"rooms"),where("members","array-contains",me.id)),up,fail));
 }
 function renderRooms(){
-  const ul=$("#rl");if(!ul||!me)return;ul.replaceChildren();
+  if(!me)return;
   const l=Object.entries(rooms).filter(([i,r])=>r.mode==="public"||(r.members||[]).includes(me.id));
-  if(!l.length)ul.appendChild(E("li","empty","Belum ada room. Tekan + di atas."));
-  l.forEach(([id,r])=>{const li=E("li","per"),g=E("div","grow");g.appendChild(E("div","n",r.name));g.appendChild(E("div","sm",roomSub(r)));li.appendChild(g);
-    li.onclick=()=>{closeDr();openRoom(id)};ul.appendChild(li)});
+  ["#rl","#hl"].forEach(q=>{const ul=$(q);if(!ul)return;ul.replaceChildren();
+    if(!l.length)ul.appendChild(E("li","empty","Belum ada room. Tekan + di atas untuk membuat."));
+    l.forEach(([id,r])=>{const li=E("li","per room"),g=E("div","grow");g.appendChild(E("div","n",r.name));g.appendChild(E("div","sm",(r.members||[]).length+" anggota"));li.appendChild(g);
+      li.appendChild(E("span","tag "+(r.mode==="public"?"pub":"lnk"),r.mode==="public"?"Publik":"Link"));
+      li.onclick=()=>{closeDr();openRoom(id)};ul.appendChild(li)})});
 }
 async function openRoom(id){
   try{
@@ -277,4 +281,4 @@ function offerCard(oid,o){
     bt.appendChild(g);if(!on)bt.appendChild(E("span","sm","Pengirim sedang offline"));
   }
   li.appendChild(bt);return li;
-    }
+                                                                                                                                                   }
