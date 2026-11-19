@@ -72,7 +72,7 @@ function nextModal(){
 /* menu + orang */
 const openDr=()=>{$("#side").classList.add("open");$("#ov").classList.add("open")},closeDr=()=>{$("#side").classList.remove("open");$("#ov").classList.remove("open")};
 $("#mn").onclick=openDr;$("#ov").onclick=closeDr;$("#np").onclick=()=>{view="newroom";closeDr();render()};$("#mp").onclick=()=>{view="profile";closeDr();render()};
-function renderAll(){renderMe();renderPeople();renderRooms();render()}
+function renderAll(){renderMe();renderPeople();renderRooms();const ae=document.activeElement;if(view==="room"){fillTrade();fillChat()}else if(!(ae&&$("#main").contains(ae)&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)))render()}
 function renderMe(){const b=$("#meb");b.replaceChildren(avatar(me.id));const g=E("div","grow");g.appendChild(E("div","n",nm(me.id)));g.appendChild(E("div","sm","Online"));b.appendChild(g)}
 function renderPeople(){
   if(!me)return;
@@ -156,14 +156,14 @@ async function saveOut(f){const a=document.createElement("a");a.href=URL.createO
 const sig=(to,o)=>addDoc(collection(db,"signals"),{from:me.id,to,d:JSON.stringify(o),ts:Date.now()}).catch(()=>toast("Gagal mengirim sinyal."));
 function newPC(tid,peer){const pc=new RTCPeerConnection(ICE),P={pc,peer,q:[],rd:false};pcs[tid]=P;pc.onconnectionstatechange=()=>{if(pc.connectionState==="failed")toast("Koneksi antar HP gagal. Coba lagi atau pakai Wi-Fi yang sama.")};pc.onicecandidate=e=>{if(e.candidate)sig(peer,{k:"ice",tid,c:e.candidate.toJSON()})};return P}
 async function flush(P){P.rd=true;for(const c of P.q)try{await P.pc.addIceCandidate(c)}catch(e){}P.q=[]}
-function offer(peer,list,ask){const tid=uid();sends[tid]={peer,list};sig(peer,{k:"req",tid,ask,files:list.map(f=>({name:f.name,size:f.size}))});toast("Menunggu "+nm(peer)+" menyetujui...")}
+function offer(peer,list,ask,done){const tid=uid();sends[tid]={peer,list,done};sig(peer,{k:"req",tid,ask,files:list.map(f=>({name:f.name,size:f.size}))});toast("Menunggu "+nm(peer)+" menyetujui...")}
 async function startSend(tid){
   const S=sends[tid],P=newPC(tid,S.peer),dc=P.pc.createDataChannel("f");dc.binaryType="arraybuffer";dc.bufferedAmountLowThreshold=1<<20;
-  dc.onopen=()=>pump(dc,S.list);
+  dc.onopen=()=>pump(dc,S.list,S.done);
   await P.pc.setLocalDescription(await P.pc.createOffer());sig(S.peer,{k:"offer",tid,sdp:P.pc.localDescription.toJSON()});
 }
 const low=dc=>new Promise(r=>{dc.onbufferedamountlow=()=>{dc.onbufferedamountlow=null;r()}});
-async function pump(dc,list){
+async function pump(dc,list,done){
   try{for(const it of list){
     dc.send(JSON.stringify({t:"meta",name:it.name,size:it.size,type:it.type}));
     for(let o=0;o<it.size;o+=CH){const buf=await it.blob.slice(o,o+CH).arrayBuffer();
@@ -171,7 +171,7 @@ async function pump(dc,list){
       dc.send(buf);if(o%(CH*64)===0)toast("Mengirim "+it.name+" "+Math.min(100,Math.round(o/it.size*100))+"%")}
     dc.send(JSON.stringify({t:"end"}))}
     while(dc.bufferedAmount>0)await new Promise(r=>setTimeout(r,100));
-    toast("Semua file terkirim.");setTimeout(()=>dc.close(),800);
+    toast("Semua file terkirim.");done&&done();setTimeout(()=>dc.close(),800);
   }catch(e){toast("Pengiriman terhenti. Cek koneksi.")}
 }
 function accept(peer,d){
@@ -204,7 +204,7 @@ function onSig(from,d){
 }
 
 /* ===== ROOM ===== */
-let rooms={},curRoom=null,offers={},msgs=[],roomFiles={},served={},rUn=[],mInit=false;
+let rooms={},curRoom=null,trade={},msgs=[],myFile=null,rUn=[],mInit=false,cdLeft=0,cdTimer=null,started={};
 const roomSub=r=>(r.mode==="public"?"Room publik":"Party, hanya lewat link")+" - "+(r.members||[]).length+" anggota";
 function listenRooms(){
   const up=s=>{s.docChanges().forEach(c=>{if(c.type==="removed")delete rooms[c.doc.id];else rooms[c.doc.id]=c.doc.data()});renderRooms()};
@@ -225,16 +225,12 @@ async function openRoom(id){
     const ref=doc(db,"rooms",id),snap=await getDoc(ref);
     if(!snap.exists())return toast("Room tidak ditemukan.");
     if(!(snap.data().members||[]).includes(me.id))await updateDoc(ref,{members:arrayUnion(me.id)});
-    rUn.forEach(f=>f());rUn=[];curRoom=id;offers={};msgs=[];mInit=false;view="room";rooms[id]=snap.data();
-    rUn.push(onSnapshot(ref,d=>{if(d.exists()){rooms[id]=d.data();renderRooms();const e=$("#rsub");if(e&&view==="room")e.textContent=roomSub(d.data())}else{delete rooms[id];renderRooms();if(curRoom===id){curRoom=null;rUn.forEach(f=>f());rUn=[];view="home";render();toast("Room sudah diakhiri oleh ketua.")}}},fail));
-    rUn.push(onSnapshot(collection(db,"rooms",id,"offers"),s=>{offers={};s.forEach(d=>offers[d.id]=d.data());serve();if(view==="room")fillOffers()},fail));
+    rUn.forEach(f=>f());rUn=[];clearInterval(cdTimer);cdTimer=null;cdLeft=0;curRoom=id;trade={};myFile=null;msgs=[];mInit=false;view="room";rooms[id]=snap.data();
+    rUn.push(onSnapshot(ref,d=>{if(d.exists()){rooms[id]=d.data();renderRooms();const e=$("#rsub");if(e&&view==="room"){e.textContent=roomSub(d.data());fillTrade()}}else{delete rooms[id];renderRooms();if(curRoom===id){curRoom=null;rUn.forEach(f=>f());rUn=[];view="home";render();toast("Room sudah diakhiri oleh ketua.")}}},fail));
+    rUn.push(onSnapshot(collection(db,"rooms",id,"trade"),s=>{trade={};s.forEach(d=>trade[d.id]=d.data());tradeCheck();if(view==="room")fillTrade()},fail));
     rUn.push(onSnapshot(query(collection(db,"rooms",id,"msgs"),orderBy("ts"),limitToLast(60)),s=>{msgs=s.docs.map(d=>d.data());const l=msgs[msgs.length-1];if(mInit&&l&&l.from!==me.id&&(document.hidden||view!=="room"))notify(nm(l.from)+": "+l.text);mInit=true;if(view==="room")fillChat()},fail));
     render();
   }catch(e){fail(e)}
-}
-function serve(){
-  Object.entries(offers).forEach(([oid,o])=>{if(o.from!==me.id)return;const f=roomFiles[oid];
-    Object.keys(o.req||{}).forEach(u=>{const k=oid+u+o.req[u];if(f&&!served[k]){served[k]=1;toast(nm(u)+" setuju. Mengirim "+f.name+"...");notify(nm(u)+" meminta "+f.name);offer(u,[{name:f.name,size:f.size,type:f.type,blob:f}],oid)}})});
 }
 function vNew(m){
   const c=E("div","card");c.appendChild(E("h2","","Buat room"));
@@ -252,15 +248,14 @@ function vRoom(m){
   const row=E("div","row");row.style.marginTop="12px";
   const cp=E("button","b s","Salin link invite");cp.onclick=async()=>{try{await navigator.clipboard.writeText(link);toast("Link disalin.")}catch(e){prompt("Salin link ini:",link)}};
   const sh=E("button","w s","Bagikan");sh.onclick=()=>navigator.share?navigator.share({title:"MiseVerse",text:"Gabung room "+r.name,url:link}).catch(()=>{}):cp.onclick();
-  const ad=E("button","g s","Tambah file");ad.onclick=()=>pick(async fs=>{for(const f of fs)await addOffer(f)});
-  row.append(cp,sh,ad);
+  row.append(cp,sh);
   if(r.owner===me.id){const en=E("button","p s","Akhiri room");en.onclick=()=>modal("Akhiri room?",["Semua anggota akan dikeluarkan dan room ini tidak bisa dibuka lagi."],[{t:"Akhiri room",c:"p",f:()=>deleteDoc(doc(db,"rooms",curRoom)).catch(fail)},{t:"Batal",c:"w"}]);row.appendChild(en)}
   c.appendChild(row);m.appendChild(c);
-  const ul=E("ul");ul.id="ofl";m.appendChild(ul);fillOffers();
+  const tr=E("div");tr.id="tr";m.appendChild(tr);fillTrade();
   const cc=E("div","card");cc.appendChild(E("h2","","Chat"));const cl=E("div","chat");cl.id="cl";cc.appendChild(cl);
-  const r2=E("div","row"),ci=E("input");ci.type="text";ci.placeholder="Tulis pesan";ci.maxLength=500;ci.style.flex="1";ci.style.margin="0";ci.style.minWidth="0";
-  const send=()=>{const v=ci.value.trim();if(!v)return;ci.value="";addDoc(collection(db,"rooms",curRoom,"msgs"),{from:me.id,text:v,ts:Date.now()}).catch(fail)};
-  const sb2=E("button","b","Kirim");sb2.onclick=send;ci.onkeydown=e=>{if(e.key==="Enter")send()};
+  const r2=E("div","row"),ci=E("input");ci.type="text";ci.placeholder="Tulis pesan";ci.maxLength=500;ci.style.flex="1";ci.style.margin="0";ci.style.minWidth="0";ci.enterKeyHint="send";
+  const send=()=>{const v=ci.value.trim();if(!v)return;ci.value="";addDoc(collection(db,"rooms",curRoom,"msgs"),{from:me.id,text:v,ts:Date.now()}).catch(fail);ci.focus()};
+  const sb2=E("button","b","Kirim");sb2.onmousedown=e=>e.preventDefault();sb2.onclick=send;ci.onkeydown=e=>{if(e.key==="Enter")send()};
   r2.append(ci,sb2);cc.appendChild(r2);m.appendChild(cc);fillChat();
 }
 function fillChat(){
@@ -269,32 +264,66 @@ function fillChat(){
   msgs.forEach(x=>{const d=E("div","msg"+(x.from===me.id?" me":""));if(x.from!==me.id)d.appendChild(E("b","",nm(x.from)));d.appendChild(E("span","",x.text));l.appendChild(d)});
   l.scrollTop=l.scrollHeight;
 }
-function fillOffers(){
-  const ul=$("#ofl");if(!ul)return;ul.replaceChildren();const ids=Object.keys(offers);
-  if(!ids.length)ul.appendChild(E("li","empty","Belum ada file. Tekan Tambah file untuk menawarkan file."));
-  ids.forEach(oid=>ul.appendChild(offerCard(oid,offers[oid])));
-}
-const offRef=oid=>doc(db,"rooms",curRoom,"offers",oid);
+
+/* ===== TRADE: 1 orang 1 file ===== */
+const slots=()=>((rooms[curRoom]||{}).members||[]).slice(0,2);
+const tRef=u=>doc(db,"rooms",curRoom,"trade",u);
 function thumb(f){return new Promise((ok,no)=>{const i=new Image();i.onload=()=>{const s=Math.min(1,160/Math.max(i.width,i.height)),c=document.createElement("canvas");c.width=i.width*s;c.height=i.height*s;c.getContext("2d").drawImage(i,0,0,c.width,c.height);ok(c.toDataURL("image/jpeg",.5))};i.onerror=no;i.src=URL.createObjectURL(f)})}
-async function addOffer(f){
-  const o={from:me.id,name:f.name,size:f.size,type:f.type||"",req:{},ts:Date.now()};
+async function setMyFile(f){
+  const o={name:f.name,size:f.size,type:f.type||"",ready:0,ts:Date.now()};
   try{if(o.type.startsWith("image/"))o.thumb=await thumb(f);else if(o.type.startsWith("text/")||/\.(txt|md|csv|json|js|html|css)$/i.test(f.name))o.snip=await f.slice(0,400).text()}catch(e){}
-  try{const r=await addDoc(collection(db,"rooms",curRoom,"offers"),o);roomFiles[r.id]=f;toast("File ditawarkan di room.")}catch(e){fail(e)}
+  myFile=f;setDoc(tRef(me.id),o).catch(fail);
 }
-function offerCard(oid,o){
-  const li=E("li"),mine=o.from===me.id;
-  li.appendChild(E("div","n",o.name));li.appendChild(E("div","sm",fmt(o.size)+" - dari "+(mine?"kamu":nm(o.from))));
-  if(o.thumb){const i=E("img","thumb nocopy");i.src=o.thumb;i.alt="Pratinjau";i.draggable=false;i.oncontextmenu=e=>e.preventDefault();li.appendChild(i)}
-  if(o.snip){const p=E("div","snip nocopy",o.snip);["copy","cut","contextmenu","selectstart","dragstart"].forEach(ev=>p.addEventListener(ev,e=>e.preventDefault()));li.appendChild(p)}
-  const bt=E("div","row");bt.style.marginTop="8px";
-  if(mine){
-    const n=Object.keys(o.req||{}).length;bt.appendChild(E("span","sm",n?n+" orang sudah setuju":"Menunggu orang yang setuju"));
-    const x=E("button","p s","Hapus");x.onclick=()=>deleteDoc(offRef(oid)).catch(fail);bt.appendChild(x);
-  }else{
-    const on=isOn(o.from),had=o.req&&o.req[me.id];
-    const g=E("button","g",had?"Setuju (minta lagi)":"Setuju");g.disabled=!on;
-    g.onclick=()=>{asked[oid]=true;updateDoc(offRef(oid),{["req."+me.id]:Date.now()}).catch(fail);toast("Menunggu pengirim mengirim file...")};
-    bt.appendChild(g);if(!on)bt.appendChild(E("span","sm","Pengirim sedang offline"));
+function tradeCheck(){
+  const s=slots(),a=trade[s[0]],b=trade[s[1]];
+  const both=s.length===2&&a&&b&&a.ready&&b.ready;
+  if(!both){if(cdTimer){clearInterval(cdTimer);cdTimer=null}cdLeft=0;return}
+  const peer=s.find(x=>x!==me.id);if(!s.includes(me.id)||!peer)return;
+  const key=curRoom+":"+a.ready+":"+b.ready;if(started[key])return;started[key]=1;
+  asked["T"+curRoom+":"+peer]=true;cdLeft=3;fillTrade();
+  cdTimer=setInterval(()=>{
+    const A=trade[s[0]],B=trade[s[1]];
+    if(!(A&&B&&A.ready&&B.ready)){clearInterval(cdTimer);cdTimer=null;cdLeft=0;fillTrade();return}
+    cdLeft--;fillTrade();
+    if(cdLeft<=0){clearInterval(cdTimer);cdTimer=null;
+      if(!myFile)return toast("File kamu hilang. Pilih ulang file.");
+      const f=myFile;offer(peer,[{name:f.name,size:f.size,type:f.type,blob:f}],"T"+curRoom+":"+me.id,()=>{deleteDoc(tRef(me.id)).catch(()=>{});myFile=null})}
+  },1000);
+}
+function tbox(label,d,mine,wait){
+  const b=E("div","tbox");b.appendChild(E("div","sm",label));
+  if(!d){
+    if(mine){const k=E("button","b","Pilih file");k.onclick=()=>pick(fs=>setMyFile(fs[0]));b.appendChild(k)}
+    else b.appendChild(E("div","sm",wait?"Menunggu teman bergabung":"Belum memilih file"));
+    return b;
   }
-  li.appendChild(bt);return li;
-                                          }
+  b.appendChild(E("div","n",d.name));b.appendChild(E("div","sm",fmt(d.size)));
+  if(d.thumb){const i=E("img","thumb nocopy");i.src=d.thumb;i.alt="Pratinjau";i.draggable=false;i.oncontextmenu=e=>e.preventDefault();b.appendChild(i)}
+  if(d.snip){const p=E("div","snip nocopy",d.snip);["copy","cut","contextmenu","selectstart","dragstart"].forEach(ev=>p.addEventListener(ev,e=>e.preventDefault()));b.appendChild(p)}
+  if(mine&&(!d.ready||!myFile)){
+    const r=E("div","row");r.style.justifyContent="center";
+    const k=E("button","w s",myFile?"Ganti file":"Pilih ulang file");k.onclick=()=>pick(fs=>setMyFile(fs[0]));
+    const x=E("button","p s","Hapus");x.onclick=()=>{myFile=null;deleteDoc(tRef(me.id)).catch(fail)};
+    r.append(k,x);b.appendChild(r);
+  }
+  if(d.ready)b.appendChild(E("div","ready","READY"));
+  return b;
+}
+function fillTrade(){
+  const box=$("#tr");if(!box||!me)return;box.replaceChildren();
+  const s=slots(),partner=s.find(x=>x!==me.id);
+  if(!s.includes(me.id)){box.appendChild(E("div","empty","Slot trade sudah penuh (2 orang). Kamu bisa ikut chat."));return}
+  const mine=trade[me.id],theirs=partner&&trade[partner];
+  box.appendChild(tbox("File kamu",mine,true));
+  box.appendChild(tbox(partner?"File "+nm(partner):"File teman",theirs,false,!partner));
+  let st="Tekan Accept kalau sudah siap";
+  if(!partner)st="Menunggu teman bergabung";else if(!mine)st="Pilih file kamu dulu";else if(!theirs)st="Menunggu teman memilih file";
+  else if(mine.ready&&theirs.ready)st=cdLeft>0?"Ready! Download dimulai dalam "+cdLeft+" detik":"Mengirim file...";
+  else if(mine.ready)st="Kamu sudah Ready. Menunggu teman";else if(theirs.ready)st=nm(partner)+" sudah Ready";
+  box.appendChild(E("div","tstat",st));
+  const ac=E("button","g full","Accept");ac.disabled=!(mine&&theirs&&!mine.ready);
+  ac.onclick=()=>{if(!myFile)return toast("Pilih ulang file kamu dulu.");updateDoc(tRef(me.id),{ready:Date.now()}).catch(fail)};
+  const cn=E("button","p full s","Cancel");cn.style.marginTop="10px";cn.disabled=!(mine&&mine.ready);
+  cn.onclick=()=>updateDoc(tRef(me.id),{ready:0}).catch(fail);
+  const w=E("div");w.style.marginBottom="22px";w.append(ac,cn);box.appendChild(w);
+                                                                                                                                                            }
