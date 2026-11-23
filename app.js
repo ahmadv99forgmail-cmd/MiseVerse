@@ -1,6 +1,6 @@
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {getAuth,onAuthStateChanged,signInWithEmailAndPassword,createUserWithEmailAndPassword,signInWithPopup,GoogleAuthProvider,signOut,updateProfile} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {initializeFirestore,doc,setDoc,updateDoc,getDoc,arrayUnion,collection,onSnapshot,query,where,orderBy,limitToLast,addDoc,deleteDoc} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {initializeFirestore,doc,setDoc,updateDoc,getDoc,arrayUnion,collection,onSnapshot,query,where,orderBy,limitToLast,addDoc,deleteDoc,runTransaction} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {firebaseConfig} from "./firebase-config.js";
 
 const $=s=>document.querySelector(s);
@@ -43,7 +43,7 @@ $("#lo").onclick=()=>signOut(auth);
 
 let pi;
 onAuthStateChanged(auth,u=>{
-  unsubs.forEach(f=>f());unsubs=[];rUn.forEach(f=>f());rUn=[];clearInterval(hb);clearInterval(pi);
+  unsubs.forEach(f=>f());unsubs=[];rUn.forEach(f=>f());rUn=[];clearInterval(hb);clearInterval(pi);clearInterval(aTimer);
   $("#boot").hidden=true;
   if(!u){me=null;$("#app").hidden=true;$("#auth").hidden=false;return}
   me={id:u.uid};$("#auth").hidden=true;$("#app").hidden=false;view="home";renderAll();
@@ -72,8 +72,8 @@ function nextModal(){
 /* menu + orang */
 const openDr=()=>{$("#side").classList.add("open");$("#ov").classList.add("open")},closeDr=()=>{$("#side").classList.remove("open");$("#ov").classList.remove("open")};
 $("#mn").onclick=openDr;$("#ov").onclick=closeDr;$("#np").onclick=()=>{view="newroom";closeDr();render()};$("#mp").onclick=()=>{view="profile";closeDr();render()};
-function renderAll(){renderMe();renderPeople();renderRooms();const ae=document.activeElement;if(view==="room"){fillTrade();fillChat()}else if(!(ae&&$("#main").contains(ae)&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)))render()}
-function renderMe(){const b=$("#meb");b.replaceChildren(avatar(me.id));const g=E("div","grow");g.appendChild(E("div","n",nm(me.id)));g.appendChild(E("div","sm","Online"));b.appendChild(g)}
+function renderAll(){renderMe();renderPeople();renderRooms();const ae=document.activeElement;if(view==="room"){fillTrade();fillChat();fillAuc()}else if(!["newroom","newauction","editprofile"].includes(view)&&!(ae&&$("#main").contains(ae)&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)))render()}
+function renderMe(){const b=$("#meb");b.replaceChildren(avatar(me.id));const g=E("div","grow");g.appendChild(E("div","n",nm(me.id)));g.appendChild(E("div","sm","Online - "+myPts()+" poin"));b.appendChild(g)}
 function renderPeople(){
   if(!me)return;
   const ps=Object.keys(users).filter(i=>i!==me.id).map(i=>({id:i,online:isOn(i)})).sort((a,b)=>b.online-a.online);
@@ -93,7 +93,7 @@ function render(){
     const b=E("button","p","Lihat orang");b.onclick=openDr;m.appendChild(b);
     const rc=E("div","card");rc.style.marginTop="24px";rc.appendChild(E("h2","","Room"));const hl=E("ul");hl.id="hl";rc.appendChild(hl);
     rc.appendChild(E("div","sm","Room Publik bisa dimasuki siapa saja. Room Link hanya bisa dimasuki lewat link invite dari ketua."));m.appendChild(rc);renderRooms()}
-  else if(view==="person")vPerson(m);else if(view==="room")vRoom(m);else if(view==="newroom")vNew(m);else if(view==="editprofile")vEdit(m);else vProfile(m);
+  else if(view==="person")vPerson(m);else if(view==="room")vRoom(m);else if(view==="newroom")vNew(m);else if(view==="editprofile")vEdit(m);else if(view==="newauction")vNewAuc(m);else vProfile(m);
 }
 function vPerson(m){
   const id=selId,on=isOn(id),c=E("div","card"),r=E("div","row");r.appendChild(avatar(id));
@@ -196,7 +196,7 @@ function onSig(from,d){
     const f=files.find(x=>x.id===d.fid&&x.vis==="pub");if(!f)return sig(from,{k:"no",tid:""});
     notify(nm(from)+" meminta file");
     modal(nm(from)+" meminta file publikmu",[f.name],[{t:"Kirim",c:"g",f:()=>offer(from,[f],d.fid)},{t:"Tolak",c:"p",f:()=>sig(from,{k:"no",tid:""})}]);
-  }else if(d.k==="ok"&&sends[d.tid]){toast(nm(from)+" setuju. Mengirim...");notify(nm(from)+" menyetujui file");startSend(d.tid)}
+  }else if(d.k==="aucask"){giveAuc(from,d)}else if(d.k==="ok"&&sends[d.tid]){toast(nm(from)+" setuju. Mengirim...");notify(nm(from)+" menyetujui file");startSend(d.tid)}
   else if(d.k==="no"){toast("Permintaan ditolak.");delete sends[d.tid]}
   else if(d.k==="offer"&&pcs[d.tid]){const P=pcs[d.tid];P.pc.setRemoteDescription(d.sdp).then(async()=>{await flush(P);await P.pc.setLocalDescription(await P.pc.createAnswer());sig(P.peer,{k:"answer",tid:d.tid,sdp:P.pc.localDescription.toJSON()})})}
   else if(d.k==="answer"&&pcs[d.tid]){const P=pcs[d.tid];P.pc.setRemoteDescription(d.sdp).then(()=>flush(P))}
@@ -225,9 +225,10 @@ async function openRoom(id){
     const ref=doc(db,"rooms",id),snap=await getDoc(ref);
     if(!snap.exists())return toast("Room tidak ditemukan.");
     if(!(snap.data().members||[]).includes(me.id))await updateDoc(ref,{members:arrayUnion(me.id)});
-    rUn.forEach(f=>f());rUn=[];clearInterval(cdTimer);cdTimer=null;cdLeft=0;curRoom=id;trade={};myFile=null;msgs=[];mInit=false;view="room";rooms[id]=snap.data();
+    rUn.forEach(f=>f());rUn=[];clearInterval(cdTimer);cdTimer=null;cdLeft=0;curRoom=id;trade={};myFile=null;msgs=[];mInit=false;aucs={};clearInterval(aTimer);aTimer=setInterval(aTick,1000);view="room";rooms[id]=snap.data();
     rUn.push(onSnapshot(ref,d=>{if(d.exists()){rooms[id]=d.data();renderRooms();const e=$("#rsub");if(e&&view==="room"){e.textContent=roomSub(d.data());fillTrade()}}else{delete rooms[id];renderRooms();if(curRoom===id){curRoom=null;rUn.forEach(f=>f());rUn=[];view="home";render();toast("Room sudah diakhiri oleh ketua.")}}},fail));
     rUn.push(onSnapshot(collection(db,"rooms",id,"trade"),s=>{trade={};s.forEach(d=>trade[d.id]=d.data());tradeCheck();if(view==="room")fillTrade()},fail));
+    rUn.push(onSnapshot(collection(db,"rooms",id,"auctions"),s=>{aucs={};s.forEach(d=>aucs[d.id]=d.data());settleAll(id);if(view==="room")fillAuc()},fail));
     rUn.push(onSnapshot(query(collection(db,"rooms",id,"msgs"),orderBy("ts"),limitToLast(60)),s=>{msgs=s.docs.map(d=>d.data());const l=msgs[msgs.length-1];if(mInit&&l&&l.from!==me.id&&(document.hidden||view!=="room"))notify(nm(l.from)+": "+l.text);mInit=true;if(view==="room")fillChat()},fail));
     render();
   }catch(e){fail(e)}
@@ -252,6 +253,7 @@ function vRoom(m){
   if(r.owner===me.id){const en=E("button","p s","Akhiri room");en.onclick=()=>modal("Akhiri room?",["Semua anggota akan dikeluarkan dan room ini tidak bisa dibuka lagi."],[{t:"Akhiri room",c:"p",f:()=>deleteDoc(doc(db,"rooms",curRoom)).catch(fail)},{t:"Batal",c:"w"}]);row.appendChild(en)}
   c.appendChild(row);m.appendChild(c);
   const tr=E("div");tr.id="tr";m.appendChild(tr);fillTrade();
+  const au=E("div");au.id="au";m.appendChild(au);Object.keys(aEl).forEach(k=>delete aEl[k]);fillAuc();
   const cc=E("div","card");cc.appendChild(E("h2","","Chat"));const cl=E("div","chat");cl.id="cl";cc.appendChild(cl);
   const r2=E("div","row"),ci=E("input");ci.type="text";ci.placeholder="Tulis pesan";ci.maxLength=500;ci.style.flex="1";ci.style.margin="0";ci.style.minWidth="0";ci.enterKeyHint="send";
   const send=()=>{const v=ci.value.trim();if(!v)return;ci.value="";addDoc(collection(db,"rooms",curRoom,"msgs"),{from:me.id,text:v,ts:Date.now()}).catch(fail);ci.focus()};
@@ -326,4 +328,112 @@ function fillTrade(){
   const cn=E("button","p full s","Cancel");cn.style.marginTop="10px";cn.disabled=!(mine&&mine.ready);
   cn.onclick=()=>updateDoc(tRef(me.id),{ready:0}).catch(fail);
   const w=E("div");w.style.marginBottom="22px";w.append(ac,cn);box.appendChild(w);
-                                                                                                                                                            }
+}
+
+/* ===== LELANG (poin virtual, file digital) ===== */
+let aucs={},aTimer=null,reqd={},claiming={};const aEl={};
+const myPts=()=>{const p=users[me.id]&&users[me.id].points;return p==null?100:p};
+const aEnd=a=>a.endsAt.toMillis(),aOver=a=>Date.now()>=aEnd(a);
+const mmss=ms=>{const s=Math.ceil(ms/1000);return Math.floor(s/60)+":"+String(s%60).padStart(2,"0")};
+const aRef=(rid,id)=>doc(db,"rooms",rid,"auctions",id);
+function aTick(){if(!curRoom)return;if(view==="room")Object.keys(aucs).forEach(updAuc);settleAll(curRoom)}
+function settleAll(rid){
+  Object.entries(aucs).forEach(([id,a])=>{
+    if(!aOver(a)||!a.top.uid)return;
+    if(a.top.uid===me.id&&!reqd[id]){reqd[id]=1;asked["A"+id]=true;sig(a.seller,{k:"aucask",aid:id,rid});toast("Kamu menang! Meminta file ke penjual...")}
+    if((a.top.uid===me.id||a.seller===me.id)&&!(claiming[id]>Date.now()))claim(rid,id,a);
+  });
+}
+async function claim(rid,id,a){
+  claiming[id]=Date.now()+15000;
+  const win=a.top.uid===me.id,delta=win?-a.top.amount:a.top.amount,cR=doc(db,"rooms",rid,"auctions",id,"claims",me.id),uR=doc(db,"users",me.id);
+  try{
+    const did=await runTransaction(db,async t=>{const c=await t.get(cR);if(c.exists())return false;const u=await t.get(uR),p=(u.data()||{}).points,cur=p==null?100:p;t.update(uR,{points:Math.max(0,cur+delta)});t.set(cR,{delta,ts:Date.now()});return true});
+    claiming[id]=Infinity;
+    if(did)toast(win?"Poinmu dipotong "+a.top.amount+" untuk "+a.title:"Kamu dapat +"+a.top.amount+" poin dari "+a.title);
+  }catch(e){}
+}
+async function giveAuc(from,d){
+  try{
+    const a=(await getDoc(aRef(d.rid,d.aid))).data(),f=files.find(x=>x.id===d.aid);
+    if(!a||a.seller!==me.id||a.top.uid!==from||!aOver(a)||!f)return sig(from,{k:"no",tid:""});
+    offer(from,[f],"A"+d.aid);
+  }catch(e){sig(from,{k:"no",tid:""})}
+}
+async function bid(id,amount){
+  const ref=aRef(curRoom,id);
+  try{
+    await runTransaction(db,async t=>{
+      const a=(await t.get(ref)).data();
+      if(aOver(a))throw new Error("Lelang sudah berakhir.");
+      const min=a.top.uid?a.top.amount+a.step:a.startPrice;
+      if(!(amount>=min))throw new Error("Tawaran minimal "+min+" poin.");
+      if(amount>myPts())throw new Error("Poinmu tidak cukup.");
+      t.update(ref,{top:{uid:me.id,amount},log:arrayUnion({u:me.id,a:amount})});
+    });
+    toast("Tawaranmu masuk: "+amount+" poin.");
+  }catch(e){e.code?fail(e):toast(e.message)}
+}
+async function newAuction(o){
+  const f=o.file,id=uid(),d={seller:me.id,title:o.title,name:f.name,size:f.size,type:f.type||"",startPrice:o.start,step:o.step,endsAt:new Date(Date.now()+o.mins*60000),top:{uid:"",amount:0},log:[],created:Date.now()};
+  try{if(d.type.startsWith("image/"))d.thumb=await thumb(f);else if(d.type.startsWith("text/")||/\.(txt|md|csv|json|js|html|css)$/i.test(f.name))d.snip=await f.slice(0,400).text()}catch(e){}
+  await addFile({id,owner:me.id,name:f.name,size:f.size,type:f.type,blob:f,folder:"Umum",vis:"priv",dl:false});
+  await setDoc(aRef(curRoom,id),d);
+}
+function vNewAuc(m){
+  const c=E("div","card");c.appendChild(E("h2","","Buat lelang"));let file=null,mins=5;
+  c.appendChild(E("label","","Judul"));const ti=E("input");ti.type="text";ti.maxLength=40;ti.placeholder="Contoh: Paket wallpaper";c.appendChild(ti);
+  const pk=E("button","b","Pilih file yang dilelang"),fl=E("div","sm","Belum ada file");pk.style.margin="8px 0 4px";
+  pk.onclick=()=>pick(fs=>{file=fs[0];fl.textContent=file.name+" ("+fmt(file.size)+")"});c.append(pk,fl);
+  c.appendChild(E("label","","Harga awal (poin)"));const sp=E("input");sp.type="number";sp.inputMode="numeric";sp.value=50;sp.min=1;c.appendChild(sp);
+  c.appendChild(E("label","","Kelipatan tawaran (poin)"));const st=E("input");st.type="number";st.inputMode="numeric";st.value=10;st.min=1;c.appendChild(st);
+  c.appendChild(E("label","","Durasi"));const ch=E("div","chips");
+  [3,5,10].forEach(n=>{const b=E("button","",n+" menit");b.setAttribute("aria-pressed",n===mins);b.onclick=()=>{mins=n;[...ch.children].forEach(x=>x.setAttribute("aria-pressed",x===b))};ch.appendChild(b)});c.appendChild(ch);
+  c.appendChild(E("p","sm","File disimpan di profilmu dan baru dikirim ke pemenang. Jangan hapus sebelum terkirim."));
+  const row=E("div","row"),go=E("button","g","Mulai lelang"),cn=E("button","w","Batal");
+  go.onclick=async()=>{
+    const t=ti.value.trim(),a=Math.floor(Number(sp.value)),b=Math.floor(Number(st.value));
+    if(t.length<2)return toast("Judul minimal 2 huruf.");if(!file)return toast("Pilih file dulu.");if(!(a>=1&&b>=1))return toast("Harga dan kelipatan minimal 1.");
+    go.disabled=true;try{await newAuction({title:t,file,start:a,step:b,mins});toast("Lelang dimulai.");view="room";render()}catch(e){go.disabled=false;fail(e)}
+  };
+  cn.onclick=()=>{view="room";render()};row.append(go,cn);c.appendChild(row);m.appendChild(c);
+}
+function fillAuc(){
+  const box=$("#au");if(!box||!me)return;
+  if(!box.firstChild){
+    const c=E("div","card"),h=E("div","row");h.appendChild(E("h2","grow","Lelang"));const pc=E("span","pts");pc.id="mpts";h.appendChild(pc);c.appendChild(h);
+    const nb=E("button","b s","Buat lelang");nb.onclick=()=>{view="newauction";render()};c.appendChild(nb);
+    const em=E("div","empty","Belum ada lelang.");em.id="aem";em.style.marginTop="12px";c.appendChild(em);
+    const ul=E("ul");ul.id="al";c.appendChild(ul);box.appendChild(c);
+  }
+  $("#mpts").textContent="Poinmu: "+myPts();
+  const ul=$("#al"),ids=Object.keys(aucs).sort((x,y)=>aucs[y].created-aucs[x].created);
+  $("#aem").hidden=ids.length>0;
+  Object.keys(aEl).forEach(id=>{if(!aucs[id]){aEl[id].remove();delete aEl[id]}});
+  ids.forEach((id,i)=>{if(!aEl[id])aEl[id]=buildAuc(id);if(ul.children[i]!==aEl[id])ul.insertBefore(aEl[id],ul.children[i]||null)});
+  ids.forEach(updAuc);
+}
+function buildAuc(id){
+  const a=aucs[id],li=E("li"),r={};
+  li.appendChild(E("div","n",a.title));r.meta=E("div","sm");li.appendChild(r.meta);
+  if(a.thumb){const i=E("img","thumb nocopy");i.src=a.thumb;i.alt="Pratinjau";i.draggable=false;i.oncontextmenu=e=>e.preventDefault();li.appendChild(i)}
+  if(a.snip){const p=E("div","snip nocopy",a.snip);["copy","cut","contextmenu","selectstart","dragstart"].forEach(ev=>p.addEventListener(ev,e=>e.preventDefault()));li.appendChild(p)}
+  r.top=E("div","atop");r.cd=E("div","acd");li.append(r.top,r.cd);
+  r.row=E("div","row");r.inp=E("input");r.inp.type="number";r.inp.inputMode="numeric";r.inp.style.flex="1";r.inp.style.margin="0";r.inp.style.minWidth="0";
+  const bt=E("button","g","Tawar");bt.onclick=()=>bid(id,Math.floor(Number(r.inp.value)));r.row.append(r.inp,bt);li.appendChild(r.row);
+  const act=E("div","row");act.style.marginTop="8px";
+  r.mf=E("button","b s","Minta file");r.mf.onclick=()=>{asked["A"+id]=true;sig(aucs[id].seller,{k:"aucask",aid:id,rid:curRoom});toast("Meminta file ke penjual...")};
+  r.dl=E("button","p s","Hapus lelang");r.dl.onclick=()=>deleteDoc(aRef(curRoom,id)).catch(fail);
+  act.append(r.mf,r.dl);li.appendChild(act);li.r=r;return li;
+}
+function updAuc(id){
+  const a=aucs[id],li=aEl[id];if(!a||!li)return;
+  const r=li.r,over=aOver(a),mine=a.seller===me.id;
+  r.meta.textContent=(mine?"Kamu penjual":"Penjual: "+nm(a.seller))+" - "+a.name+" ("+fmt(a.size)+")";
+  r.top.textContent=a.top.uid?"Tertinggi: "+nm(a.top.uid)+" - "+a.top.amount+" poin":"Belum ada tawaran. Mulai dari "+a.startPrice+" poin";
+  r.cd.textContent=over?(a.top.uid?"Selesai. Pemenang: "+nm(a.top.uid):"Selesai. Tidak ada penawar"):"Sisa waktu "+mmss(aEnd(a)-Date.now());
+  const min=a.top.uid?a.top.amount+a.step:a.startPrice;
+  r.row.hidden=over||mine;r.inp.min=min;
+  if(document.activeElement!==r.inp&&(!r.inp.value||Number(r.inp.value)<min))r.inp.value=min;
+  r.mf.hidden=!(over&&a.top.uid===me.id);r.dl.hidden=!(mine&&!a.top.uid);
+                                                                                            }
