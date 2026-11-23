@@ -18,7 +18,7 @@ button.full{width:100%}
 .tabs button[aria-pressed=true],.chips button[aria-pressed=true]{background:var(--g)}
 .tabs button[aria-pressed=false],.chips button[aria-pressed=false]{background:#fff}
 label{font-weight:700;display:block;margin-top:8px}
-input[type=text],input[type=password],select{font:inherit;color:#111;background:#fff;border:3px solid #111;padding:8px;min-height:44px;width:100%;max-width:100%;margin:4px 0 8px}
+input[type=text],input[type=password],input[type=number],select{font:inherit;color:#111;background:#fff;border:3px solid #111;padding:8px;min-height:44px;width:100%;max-width:100%;margin:4px 0 8px}
 .err{color:#c00018;font-weight:700;min-height:22px;margin-bottom:6px}
 .or{text-align:center;margin:12px 0;opacity:.7}
 header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:3px solid #111;position:sticky;top:0;background:#fff;z-index:5}
@@ -74,3 +74,6 @@ textarea:focus-visible{outline:3px solid var(--b);outline-offset:3px}
 .ready{position:absolute;inset:0;display:grid;place-items:center;background:rgba(92,242,163,.88);font-weight:700;font-size:32px;letter-spacing:.1em;color:#111}
 .tstat{text-align:center;font-weight:700;margin:6px 0 12px}
 button[disabled]{opacity:.45;box-shadow:none;cursor:not-allowed}
+.pts{border:3px solid #111;background:var(--y);padding:2px 10px;font-weight:700}
+.atop{font-weight:700;margin-top:8px}
+.acd{font-weight:700;opacity:.8;margin:4px 0 8px}
