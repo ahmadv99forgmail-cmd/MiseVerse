@@ -204,8 +204,8 @@ function onSig(from,d){
 }
 
 /* ===== ROOM ===== */
-let rooms={},curRoom=null,trade={},msgs=[],myFile=null,rUn=[],mInit=false,cdLeft=0,cdTimer=null,started={};
-const roomSub=r=>(r.mode==="public"?"Room publik":"Party, hanya lewat link")+" - "+(r.members||[]).length+" anggota";
+let rTab="trade",rooms={},curRoom=null,trade={},msgs=[],myFile=null,rUn=[],mInit=false,cdLeft=0,cdTimer=null,started={};
+const roomSub=r=>(r.kind==="auction"?"Lelang":"Trade")+" - "+(r.mode==="public"?"publik":"hanya lewat link")+" - "+(r.members||[]).length+" anggota";
 function listenRooms(){
   const up=s=>{s.docChanges().forEach(c=>{if(c.type==="removed")delete rooms[c.doc.id];else rooms[c.doc.id]=c.doc.data()});renderRooms()};
   unsubs.push(onSnapshot(query(collection(db,"rooms"),where("mode","==","public")),up,fail));
@@ -213,9 +213,14 @@ function listenRooms(){
 }
 function renderRooms(){
   if(!me)return;
-  const l=Object.entries(rooms).filter(([i,r])=>r.mode==="public"||(r.members||[]).includes(me.id));
-  ["#rl","#hl"].forEach(q=>{const ul=$(q);if(!ul)return;ul.replaceChildren();
-    if(!l.length)ul.appendChild(E("li","empty","Belum ada room. Tekan + di atas untuk membuat."));
+  const vis=Object.entries(rooms).filter(([i,r])=>r.mode==="public"||(r.members||[]).includes(me.id));
+  const kd=r=>r.kind||"trade",l=vis.filter(([i,r])=>kd(r)===rTab),cnt=k=>vis.filter(([i,r])=>kd(r)===k).length;
+  ["#rl","#hl"].forEach(q=>{const ul=$(q);if(!ul)return;
+    let t=ul.previousElementSibling;
+    if(!t||!t.classList.contains("rt")){t=E("div","tabs rt");["trade","auction"].forEach(k=>{const b=E("button","");b.onclick=()=>{rTab=k;renderRooms()};t.appendChild(b)});ul.parentNode.insertBefore(t,ul)}
+    [...t.children].forEach((b,i)=>{const k=i?"auction":"trade";b.textContent=(k==="trade"?"Trade":"Lelang")+" ("+cnt(k)+")";b.setAttribute("aria-pressed",k===rTab)});
+    ul.replaceChildren();
+    if(!l.length)ul.appendChild(E("li","empty","Belum ada room "+(rTab==="trade"?"trade":"lelang")+". Tekan + di atas."));
     l.forEach(([id,r])=>{const li=E("li","per room"),g=E("div","grow");g.appendChild(E("div","n",r.name));g.appendChild(E("div","sm",(r.members||[]).length+" anggota"));li.appendChild(g);
       li.appendChild(E("span","tag "+(r.mode==="public"?"pub":"lnk"),r.mode==="public"?"Publik":"Link"));
       li.onclick=()=>{closeDr();openRoom(id)};ul.appendChild(li)})});
@@ -225,7 +230,7 @@ async function openRoom(id){
     const ref=doc(db,"rooms",id),snap=await getDoc(ref);
     if(!snap.exists())return toast("Room tidak ditemukan.");
     if(!(snap.data().members||[]).includes(me.id))await updateDoc(ref,{members:arrayUnion(me.id)});
-    rUn.forEach(f=>f());rUn=[];clearInterval(cdTimer);cdTimer=null;cdLeft=0;curRoom=id;trade={};myFile=null;msgs=[];mInit=false;aucs={};clearInterval(aTimer);aTimer=setInterval(aTick,1000);view="room";rooms[id]=snap.data();
+    rUn.forEach(f=>f());rUn=[];clearInterval(cdTimer);cdTimer=null;cdLeft=0;curRoom=id;trade={};myFile=null;msgs=[];mInit=false;aucs={};clearInterval(aTimer);aTimer=setInterval(aTick,1000);view="room";rooms[id]=snap.data();rTab=rooms[id].kind||"trade";
     rUn.push(onSnapshot(ref,d=>{if(d.exists()){rooms[id]=d.data();renderRooms();const e=$("#rsub");if(e&&view==="room"){e.textContent=roomSub(d.data());fillTrade()}}else{delete rooms[id];renderRooms();if(curRoom===id){curRoom=null;rUn.forEach(f=>f());rUn=[];view="home";render();toast("Room sudah diakhiri oleh ketua.")}}},fail));
     rUn.push(onSnapshot(collection(db,"rooms",id,"trade"),s=>{trade={};s.forEach(d=>trade[d.id]=d.data());tradeCheck();if(view==="room")fillTrade()},fail));
     rUn.push(onSnapshot(collection(db,"rooms",id,"auctions"),s=>{aucs={};s.forEach(d=>aucs[d.id]=d.data());settleAll(id);if(view==="room")fillAuc()},fail));
@@ -235,13 +240,14 @@ async function openRoom(id){
 }
 function vNew(m){
   const c=E("div","card");c.appendChild(E("h2","","Buat room"));
-  const inp=E("input");inp.type="text";inp.placeholder="Nama room";inp.maxLength=30;
-  let md="party";const ch=E("div","chips");
-  const mk=(k,t)=>{const b=E("button","",t);b.setAttribute("aria-pressed",k===md);b.onclick=()=>{md=k;[...ch.children].forEach((x,i)=>x.setAttribute("aria-pressed",(i===0)===(k==="party")))};ch.appendChild(b)};
-  mk("party","Party (hanya lewat link)");mk("public","Room publik");
+  let kd="trade",md="party";
+  const grp=(label,opts,get,set)=>{c.appendChild(E("label","",label));const ch=E("div","chips");opts.forEach(([k,t])=>{const b=E("button","",t);b.setAttribute("aria-pressed",get()===k);b.onclick=()=>{set(k);[...ch.children].forEach((x,i)=>x.setAttribute("aria-pressed",opts[i][0]===k))};ch.appendChild(b)});c.appendChild(ch)};
+  grp("Jenis room",[["trade","Room Trade"],["auction","Room Lelang"]],()=>kd,k=>{kd=k});
+  c.appendChild(E("label","","Nama room"));const inp=E("input");inp.type="text";inp.placeholder="Nama room";inp.maxLength=30;c.appendChild(inp);
+  grp("Akses",[["party","Party (hanya lewat link)"],["public","Room publik"]],()=>md,k=>{md=k});
   const go=E("button","g","Buat room");
-  go.onclick=async()=>{const id=uid()+uid();try{await setDoc(doc(db,"rooms",id),{name:inp.value.trim()||"Room baru",owner:me.id,mode:md,members:[me.id],created:Date.now()});openRoom(id)}catch(e){fail(e)}};
-  c.append(inp,ch,go);m.appendChild(c);
+  go.onclick=async()=>{const id=uid()+uid();try{await setDoc(doc(db,"rooms",id),{name:inp.value.trim()||(kd==="trade"?"Room Trade":"Room Lelang"),kind:kd,owner:me.id,mode:md,members:[me.id],created:Date.now()});rTab=kd;openRoom(id)}catch(e){fail(e)}};
+  c.appendChild(go);m.appendChild(c);
 }
 function vRoom(m){
   const r=rooms[curRoom]||{},c=E("div","card"),link=location.origin+location.pathname+"?room="+curRoom;
@@ -252,8 +258,8 @@ function vRoom(m){
   row.append(cp,sh);
   if(r.owner===me.id){const en=E("button","p s","Akhiri room");en.onclick=()=>modal("Akhiri room?",["Semua anggota akan dikeluarkan dan room ini tidak bisa dibuka lagi."],[{t:"Akhiri room",c:"p",f:()=>deleteDoc(doc(db,"rooms",curRoom)).catch(fail)},{t:"Batal",c:"w"}]);row.appendChild(en)}
   c.appendChild(row);m.appendChild(c);
-  const tr=E("div");tr.id="tr";m.appendChild(tr);fillTrade();
-  const au=E("div");au.id="au";m.appendChild(au);Object.keys(aEl).forEach(k=>delete aEl[k]);fillAuc();
+  if(r.kind==="auction"){const au=E("div");au.id="au";m.appendChild(au);Object.keys(aEl).forEach(k=>delete aEl[k]);fillAuc()}
+  else{const tr=E("div");tr.id="tr";m.appendChild(tr);fillTrade()}
   const cc=E("div","card");cc.appendChild(E("h2","","Chat"));const cl=E("div","chat");cl.id="cl";cc.appendChild(cl);
   const r2=E("div","row"),ci=E("input");ci.type="text";ci.placeholder="Tulis pesan";ci.maxLength=500;ci.style.flex="1";ci.style.margin="0";ci.style.minWidth="0";ci.enterKeyHint="send";
   const send=()=>{const v=ci.value.trim();if(!v)return;ci.value="";addDoc(collection(db,"rooms",curRoom,"msgs"),{from:me.id,text:v,ts:Date.now()}).catch(fail);ci.focus()};
@@ -436,4 +442,4 @@ function updAuc(id){
   r.row.hidden=over||mine;r.inp.min=min;
   if(document.activeElement!==r.inp&&(!r.inp.value||Number(r.inp.value)<min))r.inp.value=min;
   r.mf.hidden=!(over&&a.top.uid===me.id);r.dl.hidden=!(mine&&!a.top.uid);
-                                                                                            }
+                                                                }
